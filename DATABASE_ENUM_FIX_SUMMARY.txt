@@ -1,0 +1,74 @@
+## 🐛 DATABASE ENUM BUG - ROOT CAUSE & FIX
+
+### **ROOT CAUSE**
+
+**Error:** `invalid input value for enum order_status: "ready"`
+
+**Why:** Database enum defined with 3 values:
+```sql
+CREATE TYPE order_status AS ENUM ('pending', 'stitching', 'completed');
+```
+
+But application code uses 4 values:
+```javascript
+const VALID_STATUSES = ['pending', 'in_progress', 'ready', 'delivered'];
+```
+
+When dashboard tries to query with status='ready', PostgreSQL rejects it because 'ready' isn't in the enum.
+
+---
+
+## **WHAT'S BEEN FIXED**
+
+1. ✅ **database.sql** - Updated enum to include all 4 values
+2. ✅ **migrations/001_fix_order_status_enum.sql** - Created migration script
+3. ✅ **order.service.js** - Updated stats function to use new statuses
+4. ✅ **Frontend** - Already uses correct status values
+
+---
+
+## **NEXT STEP: RUN THE MIGRATION**
+
+See [DATABASE_FIX_GUIDE.md](./DATABASE_FIX_GUIDE.md) for:
+- Supabase users → SQL Editor instructions
+- Local PostgreSQL → Terminal commands
+- Backup procedures
+- Verification steps
+
+**TL;DR:**
+- Supabase: Copy SQL from guide → paste in SQL Editor → Run
+- Local: `psql tailor_app < migrations/001_fix_order_status_enum.sql`
+
+---
+
+## **STATUS MAPPING**
+
+Old DB values → New DB values:
+- `pending` → `pending` (unchanged)
+- `stitching` → `in_progress` (renamed)
+- `completed` → `delivered` (renamed)
+
+Migration script automatically converts all existing records.
+
+---
+
+## **VERIFICATION**
+
+After running migration, query should return all 4 statuses:
+```sql
+SELECT DISTINCT status FROM orders ORDER BY status;
+```
+
+Expected:
+```
+pending
+in_progress  
+ready
+delivered
+```
+
+---
+
+**Status:** Ready for database migration
+**Estimated time:** 2-5 minutes
+**Risk level:** Low (migration script handles data conversion)

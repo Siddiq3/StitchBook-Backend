@@ -1,0 +1,2274 @@
+openapi: 3.0.0
+info:
+  title: Tailor CRM API
+  version: 1.0.0
+  description: |
+    Production-ready REST API for Tailor Management SaaS
+    
+    ## Authentication
+    - Use `/api/auth/login-test` for development testing
+    - Use `/api/auth/login` for production (requires Firebase token)
+    - Use `/api/auth/refresh-token` to refresh expired JWT tokens
+    - All protected endpoints require JWT Bearer token
+    
+    ## Security
+    - **JWT Authentication**: All protected endpoints require Bearer token in Authorization header
+    - **Rate Limiting**: 100 requests per 15 minutes per IP
+    - **Public Routes**: /auth/login, /auth/login-test, /health
+    - **Protected Routes**: All /shop, /customer, /order, /measurement endpoints
+    
+    ## Core Business Flow
+    1. User logs in via `/auth/login` or `/auth/login-test`
+    2. User creates their shop via `/shop` (POST)
+    3. User adds customers via `/customer` (POST)
+    4. User adds measurements via `/measurement` (POST)
+    5. User creates orders via `/order` (POST)
+    6. User tracks order status via `/order/{id}/status` (PUT)
+    
+    ## Response Format
+    Success:
+    ```json
+    {
+      "success": true,
+      "message": "Operation successful",
+      "data": { }
+    }
+    ```
+    
+    Error:
+    ```json
+    {
+      "success": false,
+      "message": "Error message",
+      "error": {
+        "code": "ERROR_CODE",
+        "details": { }
+      }
+    }
+    ```
+    
+    Paginated Response (for list endpoints):
+    ```json
+    {
+      "success": true,
+      "message": "Operation successful",
+      "data": {
+        "items": [],
+        "pagination": {
+          "page": 1,
+          "limit": 20,
+          "total": 100
+        }
+      }
+    }
+    ```
+  contact:
+    name: API Support
+    email: support@tailorcrm.com
+
+servers:
+  - url: http://localhost:5002/api
+    description: Development Server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token obtained from /auth/login or /auth/login-test
+        Format: Authorization: Bearer <token>
+
+  schemas:
+    # ==================== BUSINESS ERROR CODES ====================
+    ErrorCode:
+      type: string
+      enum:
+        - INVALID_INPUT
+        - UNAUTHORIZED
+        - FORBIDDEN
+        - NOT_FOUND
+        - DUPLICATE_PHONE
+        - INVALID_STATUS_TRANSITION
+        - CUSTOMER_NOT_FOUND
+        - ORDER_NOT_FOUND
+        - SHOP_NOT_FOUND
+        - MEASUREMENT_NOT_FOUND
+        - INTERNAL_ERROR
+
+    # ==================== PAGINATION ====================
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+          description: Current page number
+        limit:
+          type: integer
+          example: 20
+          description: Items per page
+        total:
+          type: integer
+          example: 100
+          description: Total number of items
+
+    # ==================== ERROR RESPONSE ====================
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - message
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Customer not found
+        error:
+          type: object
+          required:
+            - code
+          properties:
+            code:
+              type: string
+              example: CUSTOMER_NOT_FOUND
+              enum:
+                - INVALID_INPUT
+                - UNAUTHORIZED
+                - FORBIDDEN
+                - NOT_FOUND
+                - DUPLICATE_PHONE
+                - INVALID_STATUS_TRANSITION
+                - CUSTOMER_NOT_FOUND
+                - ORDER_NOT_FOUND
+                - SHOP_NOT_FOUND
+                - MEASUREMENT_NOT_FOUND
+                - INTERNAL_ERROR
+            details:
+              type: object
+              nullable: true
+              description: Additional error details
+
+    # ==================== SUCCESS RESPONSE ====================
+    SuccessResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Operation successful
+        data:
+          type: object
+          nullable: true
+          description: Response data
+
+    # ==================== PAGINATED RESPONSE ====================
+    PaginatedResponse:
+      type: object
+      required:
+        - success
+        - message
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Customers retrieved successfully
+        data:
+          type: object
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+
+    # ==================== USER ====================
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        phone:
+          type: string
+          example: "+1234567890"
+        name:
+          type: string
+          example: John Doe
+        shopId:
+          type: integer
+          example: 1
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+
+    # ==================== AUTH DATA ====================
+    AuthData:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJzaG9wSWQiOjEsImlhdCI6MTc0NDU2NzIwMH0.signature
+          description: JWT access token
+        refreshToken:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJpYXQiOjE3NDQ1NjcyMDB9.refresh
+          description: JWT refresh token for token renewal
+        expiresIn:
+          type: integer
+          example: 604800
+          description: Token expiry time in seconds (7 days)
+        user:
+          $ref: '#/components/schemas/User'
+
+    # ==================== SHOP ====================
+    Shop:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        userId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: My Tailor Shop
+        location:
+          type: string
+          example: 123 Main Street
+          nullable: true
+        phone:
+          type: string
+          example: "+1234567890"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+
+    # ==================== CUSTOMER ====================
+    Customer:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: John Doe
+        phone:
+          type: string
+          example: "+1234567890"
+        address:
+          type: string
+          example: 123 Main Street
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+
+    # ==================== ORDER ITEM ====================
+    OrderItem:
+      type: object
+      required:
+        - type
+        - fabric
+        - quantity
+        - price
+      properties:
+        type:
+          type: string
+          example: shirt
+          description: Type of garment (shirt, pant, kurta, etc.)
+        fabric:
+          type: string
+          example: Cotton
+          description: Fabric type
+        quantity:
+          type: integer
+          example: 2
+          description: Number of items
+        price:
+          type: number
+          example: 500
+          description: Price per item
+
+    # ==================== ORDER ====================
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        customerId:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        totalAmount:
+          type: number
+          example: 1500
+        status:
+          type: string
+          enum:
+            - pending
+            - in_progress
+            - ready
+            - delivered
+          example: pending
+        deliveryDate:
+          type: string
+          format: date
+          example: "2026-05-01"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+
+    # ==================== MEASUREMENT ====================
+    Measurement:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        customerId:
+          type: integer
+          example: 1
+        measurementsData:
+          type: object
+          additionalProperties: true
+          example:
+            chest: 40
+            waist: 32
+            length: 28
+            sleeve: 24
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-26T10:00:00Z"
+
+    # ==================== REQUEST SCHEMAS ====================
+
+    LoginRequest:
+      type: object
+      required:
+        - firebaseToken
+      properties:
+        firebaseToken:
+          type: string
+          description: Firebase ID Token from OTP verification
+          example: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
+    LoginTestRequest:
+      type: object
+      required:
+        - phone
+      properties:
+        phone:
+          type: string
+          description: Phone number in E.164 format
+          example: "+1234567890"
+        testToken:
+          type: string
+          description: Any test token (development only)
+          example: test-token
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          description: Refresh token from previous login
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJpYXQiOjE3NDQ1NjcyMDB9.refresh
+
+    ShopRequest:
+      type: object
+      required:
+        - name
+        - phone
+      properties:
+        name:
+          type: string
+          example: My Tailor Shop
+        phone:
+          type: string
+          example: "+1234567890"
+        location:
+          type: string
+          example: 123 Main Street
+
+    ShopUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Updated Shop Name
+        phone:
+          type: string
+          example: "+9876543210"
+        location:
+          type: string
+          example: 456 New Street
+
+    CustomerRequest:
+      type: object
+      required:
+        - name
+        - phone
+      properties:
+        name:
+          type: string
+          example: John Doe
+        phone:
+          type: string
+          example: "+1234567890"
+        address:
+          type: string
+          example: 123 Main Street
+
+    CustomerUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: John Updated
+        phone:
+          type: string
+          example: "+9876543210"
+        address:
+          type: string
+          example: 456 New Street
+
+    OrderRequest:
+      type: object
+      required:
+        - customerId
+        - items
+      properties:
+        customerId:
+          type: integer
+          description: Customer ID
+          example: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+          example:
+            - type: shirt
+              fabric: Cotton
+              quantity: 2
+              price: 500
+            - type: pant
+              fabric: Silk
+              quantity: 1
+              price: 750
+        deliveryDate:
+          type: string
+          format: date
+          description: Expected delivery date
+          example: "2026-05-01"
+
+    OrderUpdateRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        deliveryDate:
+          type: string
+          format: date
+
+    OrderStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - in_progress
+            - ready
+            - delivered
+          example: in_progress
+          description: |
+            Status flow: pending → in_progress → ready → delivered
+            Cannot skip stages (e.g., pending → ready is not allowed)
+
+    MeasurementRequest:
+      type: object
+      required:
+        - customerId
+        - measurementsData
+      properties:
+        customerId:
+          type: integer
+          description: Customer ID
+          example: 1
+        measurementsData:
+          type: object
+          additionalProperties: true
+          description: Dynamic measurement fields
+          example:
+            chest: 40
+            waist: 32
+            length: 28
+            sleeve: 24
+            neck: 15
+            shoulder: 18
+
+    MeasurementUpdateRequest:
+      type: object
+      properties:
+        measurementsData:
+          type: object
+          additionalProperties: true
+          example:
+            chest: 42
+            waist: 34
+
+  responses:
+    Unauthorized:
+      description: Unauthorized - Invalid or missing JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Invalid or expired token
+            error:
+              code: UNAUTHORIZED
+
+    Forbidden:
+      description: Forbidden - Access denied to resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Unauthorized access to this resource
+            error:
+              code: FORBIDDEN
+
+    NotFound:
+      description: Not Found - Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Resource not found
+            error:
+              code: NOT_FOUND
+
+    BadRequest:
+      description: Bad Request - Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: Customer ID and measurements data are required
+            error:
+              code: INVALID_INPUT
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Authentication
+    description: User authentication and login endpoints
+  - name: Shop
+    description: Shop management endpoints
+  - name: Customer
+    description: Customer management endpoints
+  - name: Order
+    description: Order management endpoints
+  - name: Measurement
+    description: Measurement management endpoints
+
+paths:
+  # ==================== AUTHENTICATION ====================
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Login with Firebase token (Production)
+      description: |
+        **Production authentication endpoint**
+        
+        Flow:
+        1. Frontend sends phone to Firebase
+        2. Firebase sends OTP
+        3. User enters OTP
+        4. Firebase returns ID Token
+        5. Frontend sends ID Token to this endpoint
+        
+        Returns JWT tokens for API access.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              firebaseToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJpYXQiOjE3NDQ1NjcyMDB9.signature"
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Login successful
+                data:
+                  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJzaG9wSWQiOjEsImlhdCI6MTc0NDU2NzIwMH0.signature"
+                  refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJpYXQiOjE3NDQ1NjcyMDB9.refresh"
+                  expiresIn: 604800
+                  user:
+                    id: 1
+                    phone: "+1234567890"
+                    name: "John Doe"
+                    shopId: 1
+                    createdAt: "2026-04-26T10:00:00Z"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Firebase token is required
+                error:
+                  code: INVALID_INPUT
+        '401':
+          description: Invalid Firebase token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid Firebase token
+                error:
+                  code: UNAUTHORIZED
+
+  /auth/login-test:
+    post:
+      tags:
+        - Authentication
+      summary: Test login (Development only)
+      description: |
+        **Development authentication endpoint**
+        
+        - Blocked in production (NODE_ENV=production)
+        - Bypasses Firebase verification
+        - Use for testing without OTP
+        
+        Returns JWT tokens for API access.
+      operationId: loginTest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginTestRequest'
+            example:
+              phone: "+1234567890"
+              testToken: "test-token"
+      responses:
+        '200':
+          description: Test login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Test login successful
+                data:
+                  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJzaG9wSWQiOjEsImlhdCI6MTc0NDU2NzIwMH0.signature"
+                  refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJpYXQiOjE3NDQ1NjcyMDB9.refresh"
+                  expiresIn: 604800
+                  user:
+                    id: 1
+                    phone: "+1234567890"
+                    name: "John Doe"
+                    shopId: 1
+                    createdAt: "2026-04-26T10:00:00Z"
+        '403':
+          description: Test login not available in production
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Test login is not available in production
+                error:
+                  code: FORBIDDEN
+        '400':
+          description: Missing phone number
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Phone number is required
+                error:
+                  code: INVALID_INPUT
+
+  /auth/refresh-token:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh JWT token
+      description: |
+        **Refresh access token**
+        
+        Use the refresh token from login to get a new access token.
+        Both token and refresh token will be rotated.
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+            example:
+              refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJpYXQiOjE3NDQ1NjcyMDB9.refresh"
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Token refreshed successfully
+                data:
+                  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJzaG9wSWQiOjEsImlhdCI6MTc0NDU2NzIwMH0.newSignature"
+                  refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzEyMzQ1Njc4OTAiLCJpYXQiOjE3NDQ1NjcyMDB9.newRefresh"
+                  expiresIn: 604800
+        '400':
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired refresh token
+                error:
+                  code: INVALID_INPUT
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Refresh token is required
+                error:
+                  code: UNAUTHORIZED
+
+  # ==================== SHOP ====================
+
+  /shop:
+    post:
+      tags:
+        - Shop
+      summary: Create a new shop
+      description: Creates a shop for the authenticated user. Each user can have only one shop.
+      operationId: createShop
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShopRequest'
+            example:
+              name: "My Tailor Shop"
+              phone: "+1234567890"
+              location: "123 Main Street"
+      responses:
+        '201':
+          description: Shop created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Shop created successfully
+                data:
+                  id: 1
+                  userId: 1
+                  name: "My Tailor Shop"
+                  location: "123 Main Street"
+                  phone: "+1234567890"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Name and phone are required
+                error:
+                  code: INVALID_INPUT
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    get:
+      tags:
+        - Shop
+      summary: Get current user's shop
+      description: Returns the shop associated with the authenticated user
+      operationId: getShop
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Shop retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Shop retrieved successfully
+                data:
+                  id: 1
+                  userId: 1
+                  name: "My Tailor Shop"
+                  location: "123 Main Street"
+                  phone: "+1234567890"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '404':
+          description: Shop not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Shop not found
+                error:
+                  code: SHOP_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    put:
+      tags:
+        - Shop
+      summary: Update shop details
+      description: Updates the shop associated with the authenticated user
+      operationId: updateShop
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShopUpdateRequest'
+            example:
+              name: "Updated Shop Name"
+              phone: "+9876543210"
+              location: "456 New Street"
+      responses:
+        '200':
+          description: Shop updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Shop updated successfully
+                data:
+                  id: 1
+                  userId: 1
+                  name: "Updated Shop Name"
+                  location: "456 New Street"
+                  phone: "+9876543210"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T11:00:00Z"
+        '404':
+          description: Shop not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Shop not found
+                error:
+                  code: SHOP_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    delete:
+      tags:
+        - Shop
+      summary: Delete shop
+      description: Deletes the shop associated with the authenticated user
+      operationId: deleteShop
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Shop deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Shop deleted successfully
+                data: null
+        '404':
+          description: Shop not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Shop not found
+                error:
+                  code: SHOP_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  # ==================== CUSTOMER ====================
+
+  /customer:
+    post:
+      tags:
+        - Customer
+      summary: Create a new customer
+      description: Creates a customer in the authenticated user's shop
+      operationId: createCustomer
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerRequest'
+            example:
+              name: "John Doe"
+              phone: "+1234567890"
+              address: "123 Main Street"
+      responses:
+        '201':
+          description: Customer created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Customer created successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  name: "John Doe"
+                  phone: "+1234567890"
+                  address: "123 Main Street"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '400':
+          description: Missing required fields or duplicate phone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    success: false
+                    message: Name and phone are required
+                    error:
+                      code: INVALID_INPUT
+                duplicatePhone:
+                  summary: Duplicate phone number
+                  value:
+                    success: false
+                    message: A customer with this phone number already exists
+                    error:
+                      code: DUPLICATE_PHONE
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    get:
+      tags:
+        - Customer
+      summary: Get all customers
+      description: Returns all customers in the authenticated user's shop with pagination
+      operationId: getCustomers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          description: Search by name or phone
+          required: false
+          schema:
+            type: string
+            example: john
+        - name: page
+          in: query
+          description: "Page number (default: 1)"
+          required: false
+          schema:
+            type: integer
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          description: "Items per page (default: 20)"
+          required: false
+          schema:
+            type: integer
+            default: 20
+            example: 20
+      responses:
+        '200':
+          description: Customers retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+              example:
+                success: true
+                message: Customers retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      shopId: 1
+                      name: "John Doe"
+                      phone: "+1234567890"
+                      address: "123 Main Street"
+                      createdAt: "2026-04-26T10:00:00Z"
+                      updatedAt: "2026-04-26T10:00:00Z"
+                    - id: 2
+                      shopId: 1
+                      name: "Jane Smith"
+                      phone: "+0987654321"
+                      address: "456 Oak Avenue"
+                      createdAt: "2026-04-26T10:00:00Z"
+                      updatedAt: "2026-04-26T10:00:00Z"
+                  pagination:
+                    page: 1
+                    limit: 20
+                    total: 50
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  /customer/{id}:
+    get:
+      tags:
+        - Customer
+      summary: Get customer by ID
+      description: Returns a specific customer by ID
+      operationId: getCustomerById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Customer ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Customer retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Customer retrieved successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  name: "John Doe"
+                  phone: "+1234567890"
+                  address: "123 Main Street"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '403':
+          description: Forbidden - Customer belongs to different shop
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this customer
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Customer not found
+                error:
+                  code: CUSTOMER_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    put:
+      tags:
+        - Customer
+      summary: Update customer
+      description: Updates a specific customer
+      operationId: updateCustomer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Customer ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerUpdateRequest'
+            example:
+              name: "John Updated"
+              phone: "+9876543210"
+              address: "456 New Street"
+      responses:
+        '200':
+          description: Customer updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Customer updated successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  name: "John Updated"
+                  phone: "+9876543210"
+                  address: "456 New Street"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T11:00:00Z"
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this customer
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Customer not found
+                error:
+                  code: CUSTOMER_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    delete:
+      tags:
+        - Customer
+      summary: Delete customer
+      description: Deletes a specific customer
+      operationId: deleteCustomer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Customer ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Customer deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Customer deleted successfully
+                data: null
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this customer
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Customer not found
+                error:
+                  code: CUSTOMER_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  # ==================== ORDER ====================
+
+  /order:
+    post:
+      tags:
+        - Order
+      summary: Create a new order
+      description: Creates an order with multiple items for a customer
+      operationId: createOrder
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+            example:
+              customerId: 1
+              items:
+                - type: "shirt"
+                  fabric: "Cotton"
+                  quantity: 2
+                  price: 500
+                - type: "pant"
+                  fabric: "Silk"
+                  quantity: 1
+                  price: 750
+              deliveryDate: "2026-05-01"
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Order created successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  shopId: 1
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 2
+                      price: 500
+                    - type: "pant"
+                      fabric: "Silk"
+                      quantity: 1
+                      price: 750
+                  totalAmount: 1750
+                  status: "pending"
+                  deliveryDate: "2026-05-01"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Customer ID and items are required
+                error:
+                  code: INVALID_INPUT
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this customer
+                error:
+                  code: FORBIDDEN
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    get:
+      tags:
+        - Order
+      summary: Get all orders
+      description: Returns all orders in the authenticated user's shop with pagination
+      operationId: getOrders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter by status
+          required: false
+          schema:
+            type: string
+            enum:
+              - pending
+              - in_progress
+              - ready
+              - delivered
+            example: pending
+        - name: customerId
+          in: query
+          description: Filter by customer ID
+          required: false
+          schema:
+            type: integer
+            example: 1
+        - name: page
+          in: query
+          description: "Page number (default: 1)"
+          required: false
+          schema:
+            type: integer
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          description: "Items per page (default: 20)"
+          required: false
+          schema:
+            type: integer
+            default: 20
+            example: 20
+      responses:
+        '200':
+          description: Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+              example:
+                success: true
+                message: Orders retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      customerId: 1
+                      shopId: 1
+                      items:
+                        - type: "shirt"
+                          fabric: "Cotton"
+                          quantity: 2
+                          price: 500
+                      totalAmount: 1000
+                      status: "pending"
+                      deliveryDate: "2026-05-01"
+                      createdAt: "2026-04-26T10:00:00Z"
+                      updatedAt: "2026-04-26T10:00:00Z"
+                    - id: 2
+                      customerId: 2
+                      shopId: 1
+                      items:
+                        - type: "kurta"
+                          fabric: "Silk"
+                          quantity: 1
+                          price: 800
+                      totalAmount: 800
+                      status: "in_progress"
+                      deliveryDate: "2026-05-05"
+                      createdAt: "2026-04-26T10:00:00Z"
+                      updatedAt: "2026-04-26T10:00:00Z"
+                  pagination:
+                    page: 1
+                    limit: 20
+                    total: 50
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  /order/{id}:
+    get:
+      tags:
+        - Order
+      summary: Get order by ID
+      description: Returns a specific order by ID
+      operationId: getOrderById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Order ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Order retrieved successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  shopId: 1
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 2
+                      price: 500
+                  totalAmount: 1000
+                  status: "pending"
+                  deliveryDate: "2026-05-01"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this order
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Order not found
+                error:
+                  code: ORDER_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    put:
+      tags:
+        - Order
+      summary: Update order
+      description: Updates order details (items, deliveryDate)
+      operationId: updateOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Order ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderUpdateRequest'
+            example:
+              items:
+                - type: "shirt"
+                  fabric: "Cotton"
+                  quantity: 3
+                  price: 500
+              deliveryDate: "2026-05-10"
+      responses:
+        '200':
+          description: Order updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Order updated successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  shopId: 1
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 3
+                      price: 500
+                  totalAmount: 1500
+                  status: "pending"
+                  deliveryDate: "2026-05-10"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T11:00:00Z"
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this order
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Order not found
+                error:
+                  code: ORDER_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    delete:
+      tags:
+        - Order
+      summary: Delete order
+      description: Deletes a specific order
+      operationId: deleteOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Order ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Order deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Order deleted successfully
+                data: null
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this order
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Order not found
+                error:
+                  code: ORDER_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  /order/{id}/status:
+    put:
+      tags:
+        - Order
+      summary: Update order status
+      description: |
+        Updates order status with flow validation
+        
+        Valid flow: pending → in_progress → ready → delivered
+        Cannot skip stages (e.g., pending → ready is not allowed)
+      operationId: updateOrderStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Order ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderStatusRequest'
+            example:
+              status: "in_progress"
+      responses:
+        '200':
+          description: Order status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Order status updated successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  shopId: 1
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 2
+                      price: 500
+                  totalAmount: 1000
+                  status: "in_progress"
+                  deliveryDate: "2026-05-01"
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T11:00:00Z"
+        '400':
+          description: Invalid status transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Invalid status transition from 'pending' to 'delivered'. Allowed: in_progress"
+                error:
+                  code: INVALID_STATUS_TRANSITION
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this order
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Order not found
+                error:
+                  code: ORDER_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  # ==================== MEASUREMENT ====================
+
+  /measurement:
+    post:
+      tags:
+        - Measurement
+      summary: Create a new measurement
+      description: |
+        Creates measurement with dynamic fields
+        
+        Any field names can be used (chest, waist, length, sleeve, etc.)
+        Data is stored as JSONB for flexibility
+      operationId: createMeasurement
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeasurementRequest'
+            example:
+              customerId: 1
+              measurementsData:
+                chest: 40
+                waist: 32
+                length: 28
+                sleeve: 24
+                neck: 15
+                shoulder: 18
+      responses:
+        '201':
+          description: Measurement created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Measurement created successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  measurementsData:
+                    chest: 40
+                    waist: 32
+                    length: 28
+                    sleeve: 24
+                    neck: 15
+                    shoulder: 18
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Customer ID and measurements data are required
+                error:
+                  code: INVALID_INPUT
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this customer
+                error:
+                  code: FORBIDDEN
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  /measurement/customer/{customerId}:
+    get:
+      tags:
+        - Measurement
+      summary: Get measurements by customer
+      description: Returns all measurements for a specific customer
+      operationId: getMeasurementsByCustomer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          description: Customer ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Measurements retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Measurements retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      customerId: 1
+                      measurementsData:
+                        chest: 40
+                        waist: 32
+                        length: 28
+                        sleeve: 24
+                      createdAt: "2026-04-26T10:00:00Z"
+                      updatedAt: "2026-04-26T10:00:00Z"
+                    - id: 2
+                      customerId: 1
+                      measurementsData:
+                        chest: 42
+                        waist: 34
+                        length: 29
+                        sleeve: 25
+                      createdAt: "2026-03-15T10:00:00Z"
+                      updatedAt: "2026-03-15T10:00:00Z"
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this customer
+                error:
+                  code: FORBIDDEN
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  /measurement/{id}:
+    get:
+      tags:
+        - Measurement
+      summary: Get measurement by ID
+      description: Returns a specific measurement by ID
+      operationId: getMeasurementById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Measurement ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Measurement retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Measurement retrieved successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  measurementsData:
+                    chest: 40
+                    waist: 32
+                    length: 28
+                    sleeve: 24
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T10:00:00Z"
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this measurement
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Measurement not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Measurement not found
+                error:
+                  code: MEASUREMENT_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    put:
+      tags:
+        - Measurement
+      summary: Update measurement
+      description: Updates measurement data
+      operationId: updateMeasurement
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Measurement ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeasurementUpdateRequest'
+            example:
+              measurementsData:
+                chest: 42
+                waist: 34
+      responses:
+        '200':
+          description: Measurement updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Measurement updated successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  measurementsData:
+                    chest: 42
+                    waist: 34
+                    length: 28
+                    sleeve: 24
+                  createdAt: "2026-04-26T10:00:00Z"
+                  updatedAt: "2026-04-26T11:00:00Z"
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this measurement
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Measurement not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Measurement not found
+                error:
+                  code: MEASUREMENT_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+    delete:
+      tags:
+        - Measurement
+      summary: Delete measurement
+      description: Deletes a specific measurement
+      operationId: deleteMeasurement
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: Measurement ID
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Measurement deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                message: Measurement deleted successfully
+                data: null
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Unauthorized access to this measurement
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Measurement not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Measurement not found
+                error:
+                  code: MEASUREMENT_NOT_FOUND
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED

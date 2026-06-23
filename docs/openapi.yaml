@@ -1,0 +1,4152 @@
+openapi: 3.0.0
+info:
+  title: Tailor CRM API
+  version: 3.0.0
+  description: |
+    # Production-Ready REST API for Tailor Management SaaS
+
+    **Last Updated:** May 10, 2026
+    **Status:** Fully Implemented & Tested
+    **Total Endpoints:** 80 (73 + 7 system)
+
+    ## Response Format (ALL endpoints)
+
+    Success:   { success: true,  message: "...", data: {} }
+    Error:     { success: false, message: "...", error: { code: "...", details: {} } }
+    Paginated: { success: true,  message: "...", data: { items: [], pagination: { page, limit, total } } }
+
+
+    ## Field Naming Convention
+    - Requests:  snake_case  (customer_id, delivery_date)
+    - Responses: camelCase   (customerId, deliveryDate)
+
+    ## Order Status Flow
+    pending → in_progress → ready → delivered  (cannot skip)
+
+    ## Error Codes
+    INVALID_INPUT | UNAUTHORIZED | FORBIDDEN | NOT_FOUND
+    DUPLICATE_PHONE | INVALID_STATUS_TRANSITION
+    CUSTOMER_NOT_FOUND | ORDER_NOT_FOUND | SHOP_NOT_FOUND
+    MEASUREMENT_NOT_FOUND | STAFF_NOT_FOUND | INVOICE_NOT_FOUND
+    INTERNAL_ERROR | RATE_LIMIT_EXCEEDED | SERVICE_UNAVAILABLE
+
+    ## Rate Limiting
+    All requests are rate-limited per IP address:
+    - **Global**: 100 requests / 15 minutes (default)
+    - **Login**: 5 requests / 15 minutes
+    - **OTP/Verify**: 3 requests / 15 minutes
+    - **Refresh**: 10 requests / 15 minutes
+    - **Upload**: 20 requests / 15 minutes
+    
+    Rate limit status in response headers:
+    - `RateLimit-Limit`: Maximum requests allowed
+    - `RateLimit-Remaining`: Requests remaining
+    - `RateLimit-Reset`: Unix timestamp when limit resets
+    
+    When rate limit exceeded: **HTTP 429** with `RATE_LIMIT_EXCEEDED` code
+
+    ## Security Features
+    - **Bearer JWT Authentication** with 7-day expiry
+    - **Token Rotation**: Every refresh returns new tokens
+    - **Session Management**: Redis-backed session tracking
+    - **Token Blacklist**: Revocation on logout or suspicious activity
+    - **Replay Attack Prevention**: JTI (JWT ID) claim validation
+    - **Request Validation**: HPP (HTTP Parameter Pollution) protection
+    - **File Upload Security**: MIME type validation, size limits
+    - **Helmet Security Headers**: XSS, CSRF, Clickjacking protection
+    - **Request Timeout**: 30-second hard timeout per request
+    - **Compression**: Automatic gzip compression for responses
+
+    ## Error Handling
+    **503 Service Unavailable** when:
+    - Redis cache is disconnected
+    - Session backend is unreachable
+    - Critical services are degraded
+    
+    **504 Gateway Timeout** when:
+    - Request exceeds 30-second processing limit
+    - Large report generation or complex calculation
+    - Retry with different parameters or contact support
+
+    ## Readiness Check
+    Use `GET /ready` for Kubernetes/Docker monitoring.
+    Returns 200 if all dependencies are healthy, 503 otherwise.
+
+  contact:
+    name: API Support
+    email: support@tailorcrm.com
+
+servers:
+  - url: http://localhost:5002/api
+    description: Development Server
+  - url: https://api.tailorcrm.com/api
+    description: Production Server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        ## JWT Authentication with Token Rotation & Blacklist
+        
+        **Obtain tokens from:**
+        - POST /auth/login (Firebase production)
+        - POST /auth/login-test (Development only)
+        
+        **Token Structure:**
+        - Access Token: 7-day expiry, contains userId, phone, shopId, sessionId, jti
+        - Refresh Token: Long-lived, used for rotation
+        
+        **Token Rotation Behavior:**
+        - Every refresh returns NEW access + refresh tokens
+        - Old refresh token becomes invalid (single-use)
+        - Prevents token reuse attacks
+        - Session ID maintained across rotations
+        
+        **Security Features:**
+        - Redis-backed session tracking
+        - Access token blacklist on logout
+        - Session activity validation
+        - JTI (JWT ID) claim prevents replay attacks
+        - Automatic revocation on suspicious activity
+        
+        **On 401 Unauthorized:**
+        - Token expired? Call POST /auth/refresh-token
+        - Still fails? Re-login with POST /auth/login
+        - Token revoked? Session blacklisted, must re-login
+        
+        **Usage:**
+        Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+  responses:
+    UnauthorizedResponse:
+      description: Unauthorized - Token invalid, expired, or revoked
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                enum:
+                  - "Invalid or expired token"
+                  - "Token has been revoked. Please login again."
+                  - "Session is not active. Please login again."
+                  - "Missing authorization header"
+                  - "Invalid authorization header format"
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "UNAUTHORIZED"
+    
+    ForbiddenResponse:
+      description: Forbidden - Access denied
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Unauthorized access"
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "FORBIDDEN"
+    
+    NotFoundResponse:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Resource not found"
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "NOT_FOUND"
+    
+    TooManyRequestsResponse:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Too many requests from this IP, please try again later"
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "RATE_LIMIT_EXCEEDED"
+              rateLimit:
+                type: object
+                properties:
+                  limit:
+                    type: integer
+                    example: 100
+                  window:
+                    type: string
+                    example: "15 minutes"
+                  remaining:
+                    type: integer
+                    example: 0
+                  resetAt:
+                    type: string
+                    format: date-time
+    
+    ServiceUnavailableResponse:
+      description: Service unavailable - Redis or critical service down
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Service temporarily unavailable. Please try again later."
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "SERVICE_UNAVAILABLE"
+    
+    GatewayTimeoutResponse:
+      description: Request timeout - operation took too long
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Request timeout - operation took too long"
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "GATEWAY_TIMEOUT"
+
+  schemas:
+
+    # ─────────────────────────────────────────────
+    # SHARED RESPONSE WRAPPERS
+    # ─────────────────────────────────────────────
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Operation successful
+        data:
+          type: object
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Resource not found
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_INPUT
+                - UNAUTHORIZED
+                - FORBIDDEN
+                - NOT_FOUND
+                - DUPLICATE_PHONE
+                - INVALID_STATUS_TRANSITION
+                - CUSTOMER_NOT_FOUND
+                - ORDER_NOT_FOUND
+                - SHOP_NOT_FOUND
+                - MEASUREMENT_NOT_FOUND
+                - STAFF_NOT_FOUND
+                - INVOICE_NOT_FOUND
+                - INTERNAL_ERROR
+            details:
+              type: object
+              nullable: true
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 100
+
+    # ─────────────────────────────────────────────
+    # CORE ENTITY SCHEMAS
+    # ─────────────────────────────────────────────
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        phone:
+          type: string
+          example: "+911234567890"
+        name:
+          type: string
+          example: "Siddiq Khan"
+          nullable: true
+        shopId:
+          type: integer
+          example: 1
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    AuthData:
+      type: object
+      properties:
+        token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjF9.sig"
+        refreshToken:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjF9.ref"
+        expiresIn:
+          type: integer
+          example: 604800
+          description: Seconds until token expires (7 days)
+        user:
+          $ref: '#/components/schemas/User'
+
+    Shop:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        userId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Siddia Tailor Shop"
+        location:
+          type: string
+          example: "123 MG Road, Hyderabad"
+          nullable: true
+        phone:
+          type: string
+          example: "+919705116606"
+        whatsappNumber:
+          type: string
+          example: "+919705116606"
+          nullable: true
+        slug:
+          type: string
+          example: "siddia-tailor-shop"
+          nullable: true
+        bio:
+          type: string
+          example: "We specialize in custom-made outfits for Men and Women."
+          nullable: true
+        instagramUrl:
+          type: string
+          example: "https://instagram.com/siddiq_tailor"
+          nullable: true
+        facebookUrl:
+          type: string
+          example: "https://facebook.com/siddiq_tailor"
+          nullable: true
+        twitterUrl:
+          type: string
+          nullable: true
+        websiteUrl:
+          type: string
+          nullable: true
+        currency:
+          type: string
+          example: "INR"
+          default: "INR"
+        measurementUnit:
+          type: string
+          enum: [inches, cm]
+          example: "inches"
+          default: "inches"
+        orderPrefix:
+          type: string
+          example: "ORD"
+          default: "ORD"
+        orderStartNumber:
+          type: integer
+          example: 1
+          default: 1
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-01T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    Customer:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Mohammed Ali"
+        phone:
+          type: string
+          example: "+919876543210"
+        address:
+          type: string
+          example: "45 Jubilee Hills, Hyderabad"
+          nullable: true
+        notes:
+          type: string
+          example: "Prefers slim fit"
+          nullable: true
+        gender:
+          type: string
+          enum: [male, female, other]
+          example: "male"
+          nullable: true
+        email:
+          type: string
+          example: "ali@example.com"
+          nullable: true
+        dateOfBirth:
+          type: string
+          format: date
+          example: "1990-05-15"
+          nullable: true
+        photoUrl:
+          type: string
+          example: "https://storage.supabase.co/avatars/customer1.jpg"
+          nullable: true
+        customerNumber:
+          type: string
+          example: "CUST001"
+          nullable: true
+        whatsappNumber:
+          type: string
+          example: "+919876543210"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-10T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    OrderItem:
+      type: object
+      required: [type, fabric, quantity, price]
+      properties:
+        type:
+          type: string
+          example: "shirt"
+          description: "Garment type (shirt, pant, kurta, lehenga, etc.)"
+        fabric:
+          type: string
+          example: "Cotton"
+          description: "Fabric/cloth material"
+        quantity:
+          type: integer
+          example: 2
+          minimum: 1
+        price:
+          type: number
+          format: float
+          example: 500.00
+          description: "Price per item in shop currency"
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        customerId:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        orderNumber:
+          type: string
+          example: "ORD001"
+          nullable: true
+        orderType:
+          type: string
+          enum: [stitching, alteration]
+          example: "stitching"
+          description: "Type of order; stitching orders require a measurement reference"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+          example:
+            - type: "shirt"
+              fabric: "Cotton"
+              quantity: 2
+              price: 500.00
+            - type: "pant"
+              fabric: "Wool"
+              quantity: 1
+              price: 800.00
+        totalAmount:
+          type: number
+          format: float
+          example: 1800.00
+          description: "Computed by backend: sum of (quantity × price)"
+        advancePaid:
+          type: number
+          format: float
+          example: 500.00
+          default: 0
+        balanceDue:
+          type: number
+          format: float
+          example: 1300.00
+          description: "Computed: totalAmount - advancePaid"
+        status:
+          type: string
+          enum: [pending, in_progress, ready, delivered]
+          example: "pending"
+        deliveryDate:
+          type: string
+          format: date
+          example: "2026-05-15"
+          nullable: true
+        trialDate:
+          type: string
+          format: date
+          example: "2026-05-10"
+          nullable: true
+        notes:
+          type: string
+          example: "Customer wants slim fit"
+          nullable: true
+        specialInstructions:
+          type: string
+          example: "Double stitching on collar"
+          nullable: true
+        priority:
+          type: string
+          enum: [normal, urgent]
+          example: "normal"
+          default: "normal"
+        clothImages:
+          type: array
+          items:
+            type: string
+          example:
+            - "https://storage.supabase.co/uploads/cloth1.jpg"
+            - "https://storage.supabase.co/uploads/cloth2.jpg"
+          nullable: true
+        assignedToStaff:
+          type: integer
+          example: 2
+          nullable: true
+        measurementId:
+          type: integer
+          example: 12
+          nullable: true
+          description: "Reference to customer measurement record"
+        measurement:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+              example: 12
+            outfitType:
+              type: string
+              example: "shirt"
+            outfitLabel:
+              type: string
+              example: "Men's Shirt"
+            measurementsData:
+              type: object
+              additionalProperties:
+                type: number
+              example:
+                Chest: 38.0
+                Sleeve: 24.5
+                Length: 28.0
+          description: "Nested measurement object (only in GET endpoints)"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    Measurement:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        customerId:
+          type: integer
+          example: 1
+        outfitType:
+          type: string
+          example: "pants"
+          nullable: true
+        outfitLabel:
+          type: string
+          example: "Pants"
+          nullable: true
+        measurementsData:
+          type: object
+          additionalProperties:
+            type: number
+          example:
+            Length: 42.5
+            "Waist Bottom": 32.0
+            "Hip Circumference Bottom": 38.0
+            "Thigh Circumference": 22.0
+            "Knee Circumference": 16.0
+            Crotch: 12.0
+            Fly: 8.0
+            "Ankle Circumference": 14.0
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    Payment:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        orderId:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        amount:
+          type: number
+          format: float
+          example: 500.00
+        paymentMethod:
+          type: string
+          enum: [cash, card, upi, bank_transfer, check, other]
+          example: "upi"
+        paymentDate:
+          type: string
+          format: date
+          example: "2026-04-29"
+          nullable: true
+        userId:
+          type: integer
+          example: 1
+        notes:
+          type: string
+          example: "Advance payment via GPay"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    Activity:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        orderId:
+          type: integer
+          example: 1
+        userId:
+          type: integer
+          example: 1
+        actionType:
+          type: string
+          enum: [status_change, payment, comment, assignment]
+          example: "status_change"
+        oldValue:
+          type: string
+          example: "pending"
+          nullable: true
+        newValue:
+          type: string
+          example: "in_progress"
+          nullable: true
+        notes:
+          type: string
+          example: "Status updated by owner"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    Staff:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Raju Kumar"
+        phone:
+          type: string
+          example: "+919876543211"
+          nullable: true
+        role:
+          type: string
+          enum: [manager, cutter, stitcher, helper, staff]
+          example: "cutter"
+        permissions:
+          type: object
+          properties:
+            viewOrders:
+              type: boolean
+              example: true
+            createOrders:
+              type: boolean
+              example: false
+            editMeasurements:
+              type: boolean
+              example: true
+            accessBilling:
+              type: boolean
+              example: false
+            accessReports:
+              type: boolean
+              example: false
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        userId:
+          type: integer
+          example: 1
+          nullable: true
+        type:
+          type: string
+          enum: [order_status, payment, delivery_due, overdue, comment, system]
+          example: "order_status"
+        title:
+          type: string
+          example: "Order Ready for Pickup"
+        body:
+          type: string
+          example: "Order #ORD001 for Mohammed Ali is ready for pickup."
+          nullable: true
+        data:
+          type: object
+          example:
+            orderId: 1
+            orderNumber: "ORD001"
+          nullable: true
+        isRead:
+          type: boolean
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    GalleryFolder:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Bridal Collection 2026"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    GalleryImage:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        folderId:
+          type: integer
+          example: 1
+          nullable: true
+        imageUrl:
+          type: string
+          example: "https://storage.supabase.co/gallery/bridal1.jpg"
+        caption:
+          type: string
+          example: "Bridal lehenga front view"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        orderId:
+          type: integer
+          example: 1
+        invoiceNumber:
+          type: string
+          example: "INV001"
+          nullable: true
+        orderNumber:
+          type: string
+          example: "ORD001"
+        customerName:
+          type: string
+          example: "Mohammed Ali"
+        shopName:
+          type: string
+          example: "Siddia Tailor Shop"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        totalAmount:
+          type: number
+          example: 1800.00
+        paidAmount:
+          type: number
+          example: 500.00
+        balanceDue:
+          type: number
+          example: 1300.00
+        shareToken:
+          type: string
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        shareUrl:
+          type: string
+          example: "http://localhost:5002/api/invoice/share/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    PortfolioItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "Bridal Lehenga"
+        description:
+          type: string
+          example: "Handcrafted bridal outfit with mirror work"
+          nullable: true
+        imageUrl:
+          type: string
+          example: "https://storage.supabase.co/portfolio/item1.jpg"
+        category:
+          type: string
+          example: "Bridal"
+          nullable: true
+        isPublic:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+    DashboardStats:
+      type: object
+      properties:
+        period:
+          type: string
+          enum: [today, week, month, year]
+          example: "month"
+        order_type:
+          type: string
+          enum: [stitching, alteration]
+          nullable: true
+          example: "stitching"
+          description: "The order type filter applied, null if no filter"
+        totalOrders:
+          type: integer
+          example: 45
+        orderCounts:
+          type: object
+          properties:
+            pending:
+              type: integer
+              example: 10
+            in_progress:
+              type: integer
+              example: 8
+            ready:
+              type: integer
+              example: 5
+            delivered:
+              type: integer
+              example: 22
+        totalRevenue:
+          type: number
+          example: 125000.00
+        pendingRevenue:
+          type: number
+          example: 35000.00
+        totalPayments:
+          type: number
+          example: 90000.00
+        totalCustomers:
+          type: integer
+          example: 30
+        newCustomers:
+          type: integer
+          example: 5
+        pastDue:
+          type: integer
+          example: 2
+        stitchingStats:
+          type: object
+          properties:
+            count:
+              type: integer
+              example: 32
+              description: "Total stitching orders in the period"
+            revenue:
+              type: number
+              example: 98000.00
+              description: "Total revenue from stitching orders"
+        alterationStats:
+          type: object
+          properties:
+            count:
+              type: integer
+              example: 13
+              description: "Total alteration orders in the period"
+            revenue:
+              type: number
+              example: 27000.00
+              description: "Total revenue from alteration orders"
+        todayDeliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        trialsToday:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        overdueOrders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        weeklyRevenue:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                example: "2026-04-23"
+              revenue:
+                type: number
+                example: 15000.00
+              orders:
+                type: integer
+                example: 5
+        topCustomers:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 1
+              name:
+                type: string
+                example: "Mohammed Ali"
+              phone:
+                type: string
+                example: "+919876543210"
+              orderCount:
+                type: integer
+                example: 8
+              totalRevenue:
+                type: number
+                example: 25000.00
+
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        shopId:
+          type: integer
+          example: 1
+        planType:
+          type: string
+          enum: [free, basic, premium, enterprise]
+          example: "free"
+        status:
+          type: string
+          enum: [active, inactive, cancelled, trial]
+          example: "trial"
+        startDate:
+          type: string
+          format: date
+          example: "2026-04-29"
+        endDate:
+          type: string
+          format: date
+          example: "2026-05-29"
+          nullable: true
+        trialEndDate:
+          type: string
+          format: date
+          example: "2026-05-29"
+          nullable: true
+        amount:
+          type: number
+          example: 0.00
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-29T10:00:00Z"
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: System
+    description: Health and readiness checks for monitoring
+  - name: Authentication
+    description: Login, logout, token management, user profile
+  - name: Shop
+    description: Shop/business settings management
+  - name: Customer
+    description: Customer management with gender support
+  - name: Order
+    description: Order management — unified format with trial date
+  - name: Measurement
+    description: Customer measurements — JSONB with outfit type
+  - name: Payment
+    description: Payment recording with auto balance reconciliation
+  - name: Activity
+    description: Activity logs and audit trail per order
+  - name: Dashboard
+    description: Analytics, stats, today deliveries, top customers
+  - name: Portfolio
+    description: Portfolio showcase with public URL sharing
+  - name: Staff
+    description: Staff management with granular permissions
+  - name: Notification
+    description: In-app notifications and push token management
+  - name: Gallery
+    description: Image gallery with folder organization
+  - name: Invoice
+    description: Invoice generation with WhatsApp sharing link
+  - name: Upload
+    description: Secure file upload with validation and size limits
+  - name: Subscription
+    description: Subscription and plan management
+
+paths:
+
+  # ══════════════════════════════════════════════════════
+  # SYSTEM HEALTH & READINESS — 2 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check endpoint
+      description: |
+        Basic liveness probe. Returns immediately if server is running.
+        Use for monitoring and load balancer health checks.
+        Does NOT check Redis or database dependencies.
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "OK"
+                  message:
+                    type: string
+                    example: "Server is running"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2026-05-10T12:34:56.789Z"
+
+  /ready:
+    get:
+      tags: [System]
+      summary: Readiness probe endpoint
+      description: |
+        Kubernetes readiness check. Verifies that:
+        - Server is running
+        - Redis cache is connected and operational
+        - Service is ready to accept traffic
+        
+        Returns 503 if Redis is unavailable or degraded.
+        Used by load balancers to route traffic only to healthy instances.
+      operationId: getReadiness
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    enum: [ready, degraded]
+                    example: "ready"
+                  redis:
+                    type: string
+                    enum: [connected, connecting, disconnected, error]
+                    example: "connected"
+                  timestamp:
+                    type: string
+                    format: date-time
+        '503':
+          description: Service not ready - Redis unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: false
+                  status:
+                    type: string
+                    enum: [ready, degraded]
+                    example: "degraded"
+                  redis:
+                    type: string
+                    enum: [connected, connecting, disconnected, error]
+                    example: "disconnected"
+                  message:
+                    type: string
+                    example: "Redis cache is unavailable"
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  # ══════════════════════════════════════════════════════
+  # AUTHENTICATION — 6 endpoints (added logout)
+  # ══════════════════════════════════════════════════════
+
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Firebase OTP Login (Production)
+      description: |
+        Production login using Firebase phone OTP verification.
+        Flow: Firebase sends OTP → user verifies → Firebase returns ID token → send here.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [firebaseToken]
+              properties:
+                firebaseToken:
+                  type: string
+                  description: Firebase ID Token from phone OTP verification
+            example:
+              firebaseToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJmaXJlYmFzZS1hcHBzLXJlZ2lzdHJ5..."
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              example:
+                success: true
+                message: Login successful
+                data:
+                  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzkxMTIzNDU2Nzg5MCIsInNob3BJZCI6MSwiaWF0IjoxNzQ1OTI4MDAwfQ.sig"
+                  refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInBob25lIjoiKzkxMTIzNDU2Nzg5MCIsImlhdCI6MTc0NTkyODAwMH0.ref"
+                  expiresIn: 604800
+                  user:
+                    id: 1
+                    phone: "+911234567890"
+                    name: "Siddiq Khan"
+                    shopId: 1
+                    createdAt: "2026-04-01T10:00:00Z"
+        '400':
+          description: Firebase token missing
+          content:
+            application/json:
+              example:
+                success: false
+                message: Firebase token is required
+                error:
+                  code: INVALID_INPUT
+        '401':
+          description: Invalid Firebase token
+          content:
+            application/json:
+              example:
+                success: false
+                message: Invalid Firebase token
+                error:
+                  code: UNAUTHORIZED
+
+  /auth/login-test:
+    post:
+      tags: [Authentication]
+      summary: Test Login — Development Only
+      description: |
+        Bypasses Firebase OTP. Use any phone number for development testing.
+        **Blocked in production (NODE_ENV=production).**
+      operationId: loginTest
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone:
+                  type: string
+                  description: Phone number in E.164 format
+                testToken:
+                  type: string
+                  description: Any string (ignored in dev)
+            example:
+              phone: "+919705116606"
+              testToken: "test-token"
+      responses:
+        '200':
+          description: Test login successful
+          content:
+            application/json:
+              example:
+                success: true
+                message: Test login successful
+                data:
+                  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQsInBob25lIjoiKzkxOTcwNTExNjYwNiIsInNob3BJZCI6bnVsbCwiaWF0IjoxNzQ1OTI4MDAwfQ.sig"
+                  refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQsInBob25lIjoiKzkxOTcwNTExNjYwNiIsImlhdCI6MTc0NTkyODAwMH0.ref"
+                  expiresIn: 604800
+                  user:
+                    id: 4
+                    phone: "+919705116606"
+                    name: null
+                    shopId: null
+                    createdAt: "2026-04-29T10:00:00Z"
+        '400':
+          description: Phone number missing
+          content:
+            application/json:
+              example:
+                success: false
+                message: Phone number is required
+                error:
+                  code: INVALID_INPUT
+        '403':
+          description: Not available in production
+          content:
+            application/json:
+              example:
+                success: false
+                message: Test login is not available in production
+                error:
+                  code: FORBIDDEN
+
+  /auth/verify-token:
+    post:
+      tags: [Authentication]
+      summary: Verify JWT Token validity
+      operationId: verifyToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+            example:
+              token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjF9.sig"
+      responses:
+        '200':
+          description: Token is valid
+          content:
+            application/json:
+              example:
+                success: true
+                message: Token is valid
+                data:
+                  userId: 1
+                  phone: "+919705116606"
+                  shopId: 1
+                  isValid: true
+                  expiresAt: "2026-05-06T10:00:00Z"
+        '401':
+          description: Token invalid or expired
+          content:
+            application/json:
+              example:
+                success: false
+                message: Invalid or expired token
+                error:
+                  code: UNAUTHORIZED
+
+  /auth/refresh-token:
+    post:
+      tags: [Authentication]
+      summary: Refresh JWT Token
+      description: Use refresh token to get new access token. Both tokens are rotated.
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+            example:
+              refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjF9.ref"
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              example:
+                success: true
+                message: Token refreshed successfully
+                data:
+                  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjF9.newSig"
+                  refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjF9.newRef"
+                  expiresIn: 604800
+        '401':
+          description: Invalid refresh token
+          content:
+            application/json:
+              example:
+                success: false
+                message: Invalid or expired refresh token
+                error:
+                  code: UNAUTHORIZED
+
+  /auth/profile:
+    get:
+      tags: [Authentication]
+      summary: Get current user profile
+      operationId: getProfile
+      responses:
+        '200':
+          description: Profile retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Profile retrieved successfully
+                data:
+                  id: 1
+                  phone: "+919705116606"
+                  name: "Siddiq Khan"
+                  shopId: 1
+                  createdAt: "2026-04-01T10:00:00Z"
+    put:
+      tags: [Authentication]
+      summary: Update user profile
+      operationId: updateProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+            example:
+              name: "Siddiq Mohammed Khan"
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Profile updated successfully
+                data:
+                  id: 1
+                  phone: "+919705116606"
+                  name: "Siddiq Mohammed Khan"
+                  shopId: 1
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Logout user and revoke tokens
+      description: |
+        Logout endpoint that:
+        1. Revokes current access token (adds to blacklist)
+        2. Invalidates session in Redis
+        3. Revokes refresh token to prevent reuse
+        4. Cannot be reversed - user must re-login
+        
+        Works even if token is already expired.
+        Recommended to call before app uninstall or account deletion.
+      operationId: logout
+      responses:
+        '200':
+          description: Logged out successfully
+          content:
+            application/json:
+              example:
+                success: true
+                message: Logged out successfully. All tokens revoked.
+                data: null
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableResponse'
+
+  # ══════════════════════════════════════════════════════
+  # SHOP — 4 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /shop:
+    post:
+      tags: [Shop]
+      summary: Create shop
+      description: Creates shop for authenticated user. Each user can have one shop.
+      operationId: createShop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone]
+              properties:
+                name:
+                  type: string
+                phone:
+                  type: string
+                location:
+                  type: string
+                whatsapp_number:
+                  type: string
+                bio:
+                  type: string
+                instagram_url:
+                  type: string
+                facebook_url:
+                  type: string
+                currency:
+                  type: string
+                  default: INR
+                measurement_unit:
+                  type: string
+                  enum: [inches, cm]
+                order_prefix:
+                  type: string
+                order_start_number:
+                  type: integer
+            example:
+              name: "Siddia Tailor Shop"
+              phone: "+919705116606"
+              location: "123 MG Road, Hyderabad"
+              whatsapp_number: "+919705116606"
+              bio: "We specialize in custom-made outfits for Men and Women."
+              currency: "INR"
+              measurement_unit: "inches"
+              order_prefix: "SID"
+              order_start_number: 1
+      responses:
+        '201':
+          description: Shop created successfully
+          content:
+            application/json:
+              example:
+                success: true
+                message: Shop created successfully
+                data:
+                  id: 1
+                  userId: 4
+                  name: "Siddia Tailor Shop"
+                  phone: "+919705116606"
+                  location: "123 MG Road, Hyderabad"
+                  whatsappNumber: "+919705116606"
+                  slug: "siddia-tailor-shop"
+                  bio: "We specialize in custom-made outfits for Men and Women."
+                  currency: "INR"
+                  measurementUnit: "inches"
+                  orderPrefix: "SID"
+                  orderStartNumber: 1
+                  createdAt: "2026-04-29T10:00:00Z"
+                  updatedAt: "2026-04-29T10:00:00Z"
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              example:
+                success: false
+                message: Name and phone are required
+                error:
+                  code: INVALID_INPUT
+
+    get:
+      tags: [Shop]
+      summary: Get current user's shop
+      operationId: getShop
+      responses:
+        '200':
+          description: Shop retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Shop retrieved successfully
+                data:
+                  id: 1
+                  userId: 4
+                  name: "Siddia Tailor Shop"
+                  phone: "+919705116606"
+                  location: "123 MG Road, Hyderabad"
+                  whatsappNumber: "+919705116606"
+                  slug: "siddia-tailor-shop"
+                  bio: "We specialize in custom-made outfits"
+                  instagramUrl: null
+                  currency: "INR"
+                  measurementUnit: "inches"
+                  orderPrefix: "SID"
+                  orderStartNumber: 1
+                  createdAt: "2026-04-01T10:00:00Z"
+                  updatedAt: "2026-04-29T10:00:00Z"
+        '404':
+          description: Shop not found (new user — needs onboarding)
+          content:
+            application/json:
+              example:
+                success: false
+                message: Shop not found
+                error:
+                  code: SHOP_NOT_FOUND
+
+    put:
+      tags: [Shop]
+      summary: Update shop details
+      operationId: updateShop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                phone:
+                  type: string
+                location:
+                  type: string
+                whatsapp_number:
+                  type: string
+                bio:
+                  type: string
+                instagram_url:
+                  type: string
+                facebook_url:
+                  type: string
+                twitter_url:
+                  type: string
+                website_url:
+                  type: string
+                currency:
+                  type: string
+                measurement_unit:
+                  type: string
+                  enum: [inches, cm]
+                order_prefix:
+                  type: string
+                order_start_number:
+                  type: integer
+            example:
+              name: "Siddia Boutique"
+              bio: "Premium custom tailoring since 2020"
+              instagram_url: "https://instagram.com/siddia_boutique"
+              currency: "INR"
+              measurement_unit: "inches"
+      responses:
+        '200':
+          description: Shop updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Shop updated successfully
+                data:
+                  id: 1
+                  name: "Siddia Boutique"
+                  bio: "Premium custom tailoring since 2020"
+                  instagramUrl: "https://instagram.com/siddia_boutique"
+                  updatedAt: "2026-04-29T12:00:00Z"
+
+    delete:
+      tags: [Shop]
+      summary: Delete shop
+      operationId: deleteShop
+      responses:
+        '200':
+          description: Shop deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Shop deleted successfully
+                data: null
+
+  # ══════════════════════════════════════════════════════
+  # CUSTOMER — 5 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /customer:
+    post:
+      tags: [Customer]
+      summary: Create customer
+      operationId: createCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone]
+              properties:
+                name:
+                  type: string
+                phone:
+                  type: string
+                address:
+                  type: string
+                notes:
+                  type: string
+                gender:
+                  type: string
+                  enum: [male, female, other]
+                email:
+                  type: string
+                date_of_birth:
+                  type: string
+                  format: date
+                photo_url:
+                  type: string
+                whatsapp_number:
+                  type: string
+            example:
+              name: "Mohammed Ali"
+              phone: "+919876543210"
+              gender: "male"
+              address: "45 Jubilee Hills, Hyderabad"
+              email: "ali@example.com"
+              date_of_birth: "1990-05-15"
+              whatsapp_number: "+919876543210"
+              notes: "Prefers slim fit, allergic to synthetic fabric"
+      responses:
+        '201':
+          description: Customer created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Customer created successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  name: "Mohammed Ali"
+                  phone: "+919876543210"
+                  gender: "male"
+                  address: "45 Jubilee Hills, Hyderabad"
+                  email: "ali@example.com"
+                  dateOfBirth: "1990-05-15"
+                  whatsappNumber: "+919876543210"
+                  customerNumber: "CUST001"
+                  notes: "Prefers slim fit"
+                  photoUrl: null
+                  createdAt: "2026-04-29T10:00:00Z"
+                  updatedAt: "2026-04-29T10:00:00Z"
+        '400':
+          description: Duplicate phone or invalid input
+          content:
+            application/json:
+              examples:
+                duplicatePhone:
+                  summary: Phone already exists
+                  value:
+                    success: false
+                    message: A customer with this phone number already exists
+                    error:
+                      code: DUPLICATE_PHONE
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    success: false
+                    message: Name and phone are required
+                    error:
+                      code: INVALID_INPUT
+
+    get:
+      tags: [Customer]
+      summary: Get all customers with pagination
+      operationId: getCustomers
+      parameters:
+        - name: search
+          in: query
+          description: Search by name or phone (debounce 400ms recommended)
+          schema:
+            type: string
+          example: "Mohammed"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+          example: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+          example: 20
+      responses:
+        '200':
+          description: Customers retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Customers retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      shopId: 1
+                      name: "Mohammed Ali"
+                      phone: "+919876543210"
+                      gender: "male"
+                      customerNumber: "CUST001"
+                      address: "45 Jubilee Hills"
+                      email: "ali@example.com"
+                      createdAt: "2026-04-10T10:00:00Z"
+                    - id: 2
+                      shopId: 1
+                      name: "Fatima Zahra"
+                      phone: "+919876543211"
+                      gender: "female"
+                      customerNumber: "CUST002"
+                      address: null
+                      email: null
+                      createdAt: "2026-04-15T10:00:00Z"
+                  pagination:
+                    page: 1
+                    limit: 20
+                    total: 2
+
+  /customer/{id}:
+    get:
+      tags: [Customer]
+      summary: Get customer by ID
+      operationId: getCustomer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Customer retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Customer retrieved successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  name: "Mohammed Ali"
+                  phone: "+919876543210"
+                  gender: "male"
+                  address: "45 Jubilee Hills, Hyderabad"
+                  email: "ali@example.com"
+                  dateOfBirth: "1990-05-15"
+                  customerNumber: "CUST001"
+                  whatsappNumber: "+919876543210"
+                  photoUrl: null
+                  notes: "Prefers slim fit"
+                  createdAt: "2026-04-10T10:00:00Z"
+                  updatedAt: "2026-04-29T10:00:00Z"
+        '403':
+          description: Customer belongs to different shop
+          content:
+            application/json:
+              example:
+                success: false
+                message: Unauthorized access to this customer
+                error:
+                  code: FORBIDDEN
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              example:
+                success: false
+                message: Customer not found
+                error:
+                  code: CUSTOMER_NOT_FOUND
+
+    put:
+      tags: [Customer]
+      summary: Update customer
+      operationId: updateCustomer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                phone:
+                  type: string
+                address:
+                  type: string
+                notes:
+                  type: string
+                gender:
+                  type: string
+                  enum: [male, female, other]
+                email:
+                  type: string
+                date_of_birth:
+                  type: string
+                photo_url:
+                  type: string
+                whatsapp_number:
+                  type: string
+            example:
+              name: "Mohammed Ali Khan"
+              address: "50 Banjara Hills, Hyderabad"
+              notes: "Updated measurements for wedding suit"
+      responses:
+        '200':
+          description: Customer updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Customer updated successfully
+                data:
+                  id: 1
+                  name: "Mohammed Ali Khan"
+                  address: "50 Banjara Hills, Hyderabad"
+                  notes: "Updated measurements for wedding suit"
+                  updatedAt: "2026-04-29T12:00:00Z"
+
+    delete:
+      tags: [Customer]
+      summary: Delete customer
+      operationId: deleteCustomer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Customer deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Customer deleted successfully
+                data: null
+
+  # ══════════════════════════════════════════════════════
+  # ORDER — 7 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /order:
+    post:
+      tags: [Order]
+      summary: Create order — unified format
+      description: |
+        Creates order. Backend auto-computes:
+        - totalAmount = sum(quantity × price per item)
+        - balanceDue = totalAmount - advance_paid
+        - orderNumber = prefix + auto-incremented number (e.g. SID001)
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, items]
+              properties:
+                customer_id:
+                  type: integer
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/OrderItem'
+                delivery_date:
+                  type: string
+                  format: date
+                trial_date:
+                  type: string
+                  format: date
+                advance_paid:
+                  type: number
+                  default: 0
+                notes:
+                  type: string
+                special_instructions:
+                  type: string
+                priority:
+                  type: string
+                  enum: [normal, urgent]
+                  default: normal
+                cloth_images:
+                  type: array
+                  items:
+                    type: string
+                assigned_to_staff:
+                  type: integer
+                measurement_id:
+                  type: integer
+                  nullable: true
+                  description: "Optional reference to customer measurement"
+                order_type:
+                  type: string
+                  enum: [stitching, alteration]
+                  description: "Order type; stitching requires a measurement_id"
+                  example: stitching
+            example:
+              customer_id: 1
+              items:
+                - type: "shirt"
+                  fabric: "Cotton"
+                  quantity: 2
+                  price: 500.00
+                - type: "pant"
+                  fabric: "Wool"
+                  quantity: 1
+                  price: 800.00
+              delivery_date: "2026-05-15"
+              trial_date: "2026-05-10"
+              advance_paid: 500.00
+              notes: "Customer wants slim fit"
+              special_instructions: "Double stitching on collar"
+              priority: "urgent"
+              cloth_images:
+                - "https://storage.supabase.co/uploads/cloth1.jpg"
+              assigned_to_staff: 1
+              measurement_id: 12
+              order_type: stitching
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              example:
+                success: true
+                message: Order created successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  shopId: 1
+                  orderNumber: "SID001"
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 2
+                      price: 500.00
+                    - type: "pant"
+                      fabric: "Wool"
+                      quantity: 1
+                      price: 800.00
+                  totalAmount: 1800.00
+                  advancePaid: 500.00
+                  balanceDue: 1300.00
+                  status: "pending"
+                  deliveryDate: "2026-05-15"
+                  trialDate: "2026-05-10"
+                  notes: "Customer wants slim fit"
+                  specialInstructions: "Double stitching on collar"
+                  priority: "urgent"
+                  clothImages:
+                    - "https://storage.supabase.co/uploads/cloth1.jpg"
+                  assignedToStaff: 1
+                  measurementId: 12
+                  orderType: "stitching"
+                  measurement:
+                    id: 12
+                    outfitType: "shirt"
+                    outfitLabel: "Men's Shirt"
+                    measurementsData:
+                      Chest: 38.0
+                      Sleeve: 24.5
+                      Length: 28.0
+                  createdAt: "2026-04-29T10:00:00Z"
+                  updatedAt: "2026-04-29T10:00:00Z"
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              example:
+                success: false
+                message: Customer ID and items are required
+                error:
+                  code: INVALID_INPUT
+
+    get:
+      tags: [Order]
+      summary: Get all orders with filters
+      operationId: getOrders
+      parameters:
+        - name: status
+          in: query
+          description: Filter by order status
+          schema:
+            type: string
+            enum: [pending, in_progress, ready, delivered]
+          example: pending
+        - name: customerId
+          in: query
+          description: Filter by customer
+          schema:
+            type: integer
+          example: 1
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Orders retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Orders retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      customerId: 1
+                      shopId: 1
+                      orderNumber: "SID001"
+                      items:
+                        - type: "shirt"
+                          fabric: "Cotton"
+                          quantity: 2
+                          price: 500.00
+                      totalAmount: 1800.00
+                      advancePaid: 500.00
+                      balanceDue: 1300.00
+                      status: "pending"
+                      orderType: "stitching"
+                      deliveryDate: "2026-05-15"
+                      trialDate: "2026-05-10"
+                      priority: "urgent"
+                      createdAt: "2026-04-29T10:00:00Z"
+                  pagination:
+                    page: 1
+                    limit: 20
+                    total: 1
+
+  /order/{id}:
+    get:
+      tags: [Order]
+      summary: Get order by ID
+      operationId: getOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Order retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Order retrieved successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  shopId: 1
+                  orderNumber: "SID001"
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 2
+                      price: 500.00
+                    - type: "pant"
+                      fabric: "Wool"
+                      quantity: 1
+                      price: 800.00
+                  totalAmount: 1800.00
+                  advancePaid: 500.00
+                  balanceDue: 1300.00
+                  status: "in_progress"
+                  orderType: "stitching"
+                  deliveryDate: "2026-05-15"
+                  trialDate: "2026-05-10"
+                  notes: "Customer wants slim fit"
+                  specialInstructions: "Double stitching on collar"
+                  priority: "urgent"
+                  clothImages:
+                    - "https://storage.supabase.co/uploads/cloth1.jpg"
+                  assignedToStaff: 1
+                  measurementId: 12
+                  measurement:
+                    id: 12
+                    outfitType: "shirt"
+                    outfitLabel: "Men's Shirt"
+                    measurementsData:
+                      Chest: 38.0
+                      Sleeve: 24.5
+                      Length: 28.0
+                  createdAt: "2026-04-29T10:00:00Z"
+                  updatedAt: "2026-04-29T11:00:00Z"
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              example:
+                success: false
+                message: Order not found
+                error:
+                  code: ORDER_NOT_FOUND
+
+    put:
+      tags: [Order]
+      summary: Update order details
+      operationId: updateOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OrderItem'
+                delivery_date:
+                  type: string
+                  format: date
+                trial_date:
+                  type: string
+                  format: date
+                notes:
+                  type: string
+                special_instructions:
+                  type: string
+                priority:
+                  type: string
+                  enum: [normal, urgent]
+                cloth_images:
+                  type: array
+                  items:
+                    type: string
+                assigned_to_staff:
+                  type: integer
+                measurement_id:
+                  type: integer
+                  nullable: true
+                  description: "Update reference to customer measurement"
+                order_type:
+                  type: string
+                  enum: [stitching, alteration]
+                  description: "Update order type"
+            example:
+              delivery_date: "2026-05-20"
+              notes: "Customer requested delivery earlier"
+              priority: "urgent"
+              measurement_id: 15
+              order_type: alteration
+      responses:
+        '200':
+          description: Order updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Order updated successfully
+                data:
+                  id: 1
+                  deliveryDate: "2026-05-20"
+                  notes: "Customer requested delivery earlier"
+                  priority: "urgent"
+                  updatedAt: "2026-04-29T13:00:00Z"
+
+    delete:
+      tags: [Order]
+      summary: Delete order
+      operationId: deleteOrder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Order deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Order deleted successfully
+                data: null
+
+  /order/{id}/status:
+    put:
+      tags: [Order]
+      summary: Update order status — workflow validated
+      description: |
+        Strict flow: **pending → in_progress → ready → delivered**
+        Cannot skip stages. Cannot go backwards.
+        Auto-logs activity on status change.
+      operationId: updateOrderStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [pending, in_progress, ready, delivered]
+            example:
+              status: "in_progress"
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Order status updated successfully
+                data:
+                  id: 1
+                  status: "in_progress"
+                  previousStatus: "pending"
+                  updatedAt: "2026-04-29T14:00:00Z"
+        '400':
+          description: Invalid status transition
+          content:
+            application/json:
+              example:
+                success: false
+                message: "Invalid status transition from 'pending' to 'delivered'. Allowed next status: in_progress"
+                error:
+                  code: INVALID_STATUS_TRANSITION
+
+  /order/{id}/jobsheet:
+    get:
+      tags: [Order]
+      summary: Get job sheet data for PDF generation
+      description: Returns complete data needed to generate job sheet PDF to share with cutting master or tailor.
+      operationId: getJobSheet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Job sheet data retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Job sheet data retrieved successfully
+                data:
+                  order:
+                    id: 1
+                    orderNumber: "SID001"
+                    deliveryDate: "2026-05-15"
+                    trialDate: "2026-05-10"
+                    status: "in_progress"
+                    priority: "urgent"
+                    items:
+                      - type: "shirt"
+                        fabric: "Cotton"
+                        quantity: 2
+                        price: 500.00
+                    specialInstructions: "Double stitching on collar"
+                    clothImages:
+                      - "https://storage.supabase.co/uploads/cloth1.jpg"
+                  customer:
+                    id: 1
+                    name: "Mohammed Ali"
+                    phone: "+919876543210"
+                    measurements:
+                      - outfitType: "shirt"
+                        outfitLabel: "Shirt"
+                        measurementsData:
+                          "Medium Length": 28.0
+                          "Shoulder Width": 17.0
+                          Chest: 40.0
+                          Waist: 34.0
+                  shop:
+                    name: "Siddia Tailor Shop"
+                    phone: "+919705116606"
+                  assignedStaff:
+                    id: 1
+                    name: "Raju Kumar"
+                    phone: "+919876543211"
+
+  # ══════════════════════════════════════════════════════
+  # MEASUREMENT — 5 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /measurement:
+    post:
+      tags: [Measurement]
+      summary: Create measurement record
+      description: All measurement values stored as JSONB. Any field names allowed. Decimals up to 2 places.
+      operationId: createMeasurement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, measurements_data]
+              properties:
+                customer_id:
+                  type: integer
+                outfit_type:
+                  type: string
+                outfit_label:
+                  type: string
+                measurements_data:
+                  type: object
+                  additionalProperties:
+                    type: number
+            example:
+              customer_id: 1
+              outfit_type: "pants"
+              outfit_label: "Pants"
+              measurements_data:
+                Length: 42.5
+                "Waist Bottom": 32.0
+                "Hip Circumference Bottom": 38.0
+                "Thigh Circumference": 22.0
+                "Knee Circumference": 16.0
+                Crotch: 12.0
+                Fly: 8.0
+                "Ankle Circumference": 14.0
+      responses:
+        '201':
+          description: Measurement created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Measurement created successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  outfitType: "pants"
+                  outfitLabel: "Pants"
+                  measurementsData:
+                    Length: 42.5
+                    "Waist Bottom": 32.0
+                    "Hip Circumference Bottom": 38.0
+                    "Thigh Circumference": 22.0
+                    "Knee Circumference": 16.0
+                    Crotch: 12.0
+                    Fly: 8.0
+                    "Ankle Circumference": 14.0
+                  createdAt: "2026-04-29T10:00:00Z"
+                  updatedAt: "2026-04-29T10:00:00Z"
+
+  /measurement/customer/{customerId}:
+    get:
+      tags: [Measurement]
+      summary: Get all measurements for a customer
+      operationId: getMeasurementsByCustomer
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+        - name: outfit_type
+          in: query
+          required: false
+          description: Filter measurements by outfit type (shirt, pant, kurta, etc.)
+          schema:
+            type: string
+          example: shirt
+      responses:
+        '200':
+          description: Measurements retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Measurements retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      customerId: 1
+                      outfitType: "pants"
+                      outfitLabel: "Pants"
+                      measurementsData:
+                        Length: 42.5
+                        "Waist Bottom": 32.0
+                      createdAt: "2026-04-29T10:00:00Z"
+                    - id: 2
+                      customerId: 1
+                      outfitType: "shirt"
+                      outfitLabel: "Shirt"
+                      measurementsData:
+                        "Medium Length": 28.0
+                        Chest: 40.0
+                        Waist: 34.0
+                      createdAt: "2026-04-20T10:00:00Z"
+
+  /measurement/{id}:
+    get:
+      tags: [Measurement]
+      summary: Get measurement by ID
+      operationId: getMeasurement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Measurement retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Measurement retrieved successfully
+                data:
+                  id: 1
+                  customerId: 1
+                  outfitType: "pants"
+                  outfitLabel: "Pants"
+                  measurementsData:
+                    Length: 42.5
+                    "Waist Bottom": 32.0
+                  createdAt: "2026-04-29T10:00:00Z"
+        '404':
+          description: Measurement not found
+          content:
+            application/json:
+              example:
+                success: false
+                message: Measurement not found
+                error:
+                  code: MEASUREMENT_NOT_FOUND
+
+    put:
+      tags: [Measurement]
+      summary: Update measurement
+      operationId: updateMeasurement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                measurements_data:
+                  type: object
+                  additionalProperties:
+                    type: number
+            example:
+              measurements_data:
+                Length: 43.0
+                "Waist Bottom": 33.0
+                "Hip Circumference Bottom": 39.0
+      responses:
+        '200':
+          description: Measurement updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Measurement updated successfully
+                data:
+                  id: 1
+                  measurementsData:
+                    Length: 43.0
+                    "Waist Bottom": 33.0
+                    "Hip Circumference Bottom": 39.0
+                  updatedAt: "2026-04-29T14:00:00Z"
+
+    delete:
+      tags: [Measurement]
+      summary: Delete measurement
+      operationId: deleteMeasurement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Measurement deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Measurement deleted successfully
+                data: null
+
+  # ══════════════════════════════════════════════════════
+  # PAYMENT — 3 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /payment:
+    post:
+      tags: [Payment]
+      summary: Record payment for an order
+      description: Auto-recalculates order balance_due after recording. Also logs activity.
+      operationId: createPayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, amount]
+              properties:
+                orderId:
+                  type: integer
+                amount:
+                  type: number
+                paymentMethod:
+                  type: string
+                  enum: [cash, card, upi, bank_transfer, check, other]
+                  default: cash
+                paymentDate:
+                  type: string
+                  format: date
+                notes:
+                  type: string
+            example:
+              orderId: 1
+              amount: 500.00
+              paymentMethod: "upi"
+              paymentDate: "2026-04-29"
+              notes: "Advance payment via GPay"
+      responses:
+        '201':
+          description: Payment recorded successfully
+          content:
+            application/json:
+              example:
+                success: true
+                message: Payment recorded successfully
+                data:
+                  id: 1
+                  orderId: 1
+                  shopId: 1
+                  amount: 500.00
+                  paymentMethod: "upi"
+                  paymentDate: "2026-04-29"
+                  notes: "Advance payment via GPay"
+                  createdAt: "2026-04-29T10:00:00Z"
+                  orderUpdated:
+                    totalAmount: 1800.00
+                    advancePaid: 500.00
+                    balanceDue: 1300.00
+
+  /payment/order/{orderId}:
+    get:
+      tags: [Payment]
+      summary: Get all payments for an order
+      operationId: getPaymentsByOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Payments retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Payments retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      orderId: 1
+                      amount: 500.00
+                      paymentMethod: "upi"
+                      paymentDate: "2026-04-29"
+                      notes: "Advance payment via GPay"
+                      createdAt: "2026-04-29T10:00:00Z"
+                    - id: 2
+                      orderId: 1
+                      amount: 800.00
+                      paymentMethod: "cash"
+                      paymentDate: "2026-05-14"
+                      notes: "Final payment on delivery"
+                      createdAt: "2026-05-14T10:00:00Z"
+
+  /payment/{id}:
+    delete:
+      tags: [Payment]
+      summary: Delete payment record
+      description: Deletes payment and recalculates order balance_due.
+      operationId: deletePayment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Payment deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Payment deleted successfully
+                data:
+                  orderUpdated:
+                    balanceDue: 1800.00
+
+  # ══════════════════════════════════════════════════════
+  # ACTIVITY — 2 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /activity/order/{orderId}:
+    get:
+      tags: [Activity]
+      summary: Get activity timeline for an order
+      operationId: getActivityByOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Activity logs retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Activity logs retrieved successfully
+                data:
+                  items:
+                    - id: 3
+                      orderId: 1
+                      actionType: "comment"
+                      notes: "Customer called, needs delivery by Friday"
+                      createdAt: "2026-04-29T15:00:00Z"
+                    - id: 2
+                      orderId: 1
+                      actionType: "payment"
+                      newValue: "500.00"
+                      notes: "Payment recorded: ₹500 via upi"
+                      createdAt: "2026-04-29T12:00:00Z"
+                    - id: 1
+                      orderId: 1
+                      actionType: "status_change"
+                      oldValue: "pending"
+                      newValue: "in_progress"
+                      notes: "Status changed from pending to in_progress"
+                      createdAt: "2026-04-29T11:00:00Z"
+
+    post:
+      tags: [Activity]
+      summary: Add comment/note to order activity log
+      operationId: addActivityNote
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notes]
+              properties:
+                notes:
+                  type: string
+            example:
+              notes: "Customer called, needs delivery by Friday urgently"
+      responses:
+        '201':
+          description: Comment added
+          content:
+            application/json:
+              example:
+                success: true
+                message: Activity note added successfully
+                data:
+                  id: 4
+                  orderId: 1
+                  actionType: "comment"
+                  notes: "Customer called, needs delivery by Friday urgently"
+                  createdAt: "2026-04-29T16:00:00Z"
+
+  # ══════════════════════════════════════════════════════
+  # DASHBOARD — 1 endpoint
+  # ══════════════════════════════════════════════════════
+
+  /dashboard/stats:
+    get:
+      tags: [Dashboard]
+      summary: Get comprehensive dashboard statistics
+      description: Returns orders, revenue, customer stats, today's deliveries, trials, overdue, weekly chart data, top customers, and split stats by order type. Supports filtering by order type.
+      operationId: getDashboardStats
+      parameters:
+        - name: period
+          in: query
+          description: Time period for stats
+          schema:
+            type: string
+            enum: [today, week, month, year]
+            default: month
+          example: month
+        - name: order_type
+          in: query
+          description: Filter stats by order type. If omitted, returns stats for all orders.
+          schema:
+            type: string
+            enum: [stitching, alteration]
+          example: stitching
+      responses:
+        '200':
+          description: Dashboard stats retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Dashboard stats retrieved successfully
+                data:
+                  period: "month"
+                  order_type: "stitching"
+                  totalOrders: 32
+                  orderCounts:
+                    pending: 8
+                    in_progress: 6
+                    ready: 4
+                    delivered: 14
+                  totalRevenue: 98000.00
+                  pendingRevenue: 22000.00
+                  totalPayments: 76000.00
+                  totalCustomers: 30
+                  newCustomers: 5
+                  pastDue: 2
+                  stitchingStats:
+                    count: 32
+                    revenue: 98000.00
+                  alterationStats:
+                    count: 13
+                    revenue: 27000.00
+                  todayDeliveries:
+                    - id: 3
+                      orderNumber: "SID003"
+                      customerId: 3
+                      status: "ready"
+                      deliveryDate: "2026-04-29"
+                      totalAmount: 2000.00
+                      balanceDue: 500.00
+                  trialsToday:
+                    - id: 4
+                      orderNumber: "SID004"
+                      customerId: 4
+                      status: "in_progress"
+                      trialDate: "2026-04-29"
+                  overdueOrders:
+                    - id: 2
+                      orderNumber: "SID002"
+                      customerId: 2
+                      status: "in_progress"
+                      deliveryDate: "2026-04-27"
+                  weeklyRevenue:
+                    - date: "2026-04-23"
+                      revenue: 18000.00
+                      orders: 6
+                    - date: "2026-04-24"
+                      revenue: 12000.00
+                      orders: 4
+                    - date: "2026-04-25"
+                      revenue: 22000.00
+                      orders: 7
+                    - date: "2026-04-26"
+                      revenue: 0.00
+                      orders: 0
+                    - date: "2026-04-27"
+                      revenue: 8000.00
+                      orders: 2
+                    - date: "2026-04-28"
+                      revenue: 15000.00
+                      orders: 5
+                    - date: "2026-04-29"
+                      revenue: 5000.00
+                      orders: 2
+                  topCustomers:
+                    - id: 1
+                      name: "Mohammed Ali"
+                      phone: "+919876543210"
+                      orderCount: 8
+                      totalRevenue: 25000.00
+                    - id: 2
+                      name: "Fatima Zahra"
+                      phone: "+919876543211"
+                      orderCount: 5
+                      totalRevenue: 18000.00
+
+  # ══════════════════════════════════════════════════════
+  # PORTFOLIO — 5 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /portfolio:
+    post:
+      tags: [Portfolio]
+      summary: Add portfolio item
+      operationId: createPortfolioItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, imageUrl]
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                imageUrl:
+                  type: string
+                category:
+                  type: string
+                isPublic:
+                  type: boolean
+                  default: true
+            example:
+              title: "Bridal Lehenga — Red Mirror Work"
+              description: "Handcrafted bridal outfit with mirror work embroidery"
+              imageUrl: "https://storage.supabase.co/portfolio/bridal1.jpg"
+              category: "Bridal"
+              isPublic: true
+      responses:
+        '201':
+          description: Portfolio item created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Portfolio item created successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  title: "Bridal Lehenga — Red Mirror Work"
+                  description: "Handcrafted bridal outfit with mirror work embroidery"
+                  imageUrl: "https://storage.supabase.co/portfolio/bridal1.jpg"
+                  category: "Bridal"
+                  isPublic: true
+                  createdAt: "2026-04-29T10:00:00Z"
+
+    get:
+      tags: [Portfolio]
+      summary: Get shop's portfolio items (authenticated)
+      operationId: getPortfolioItems
+      responses:
+        '200':
+          description: Portfolio items retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Portfolio items retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      title: "Bridal Lehenga — Red Mirror Work"
+                      imageUrl: "https://storage.supabase.co/portfolio/bridal1.jpg"
+                      category: "Bridal"
+                      isPublic: true
+                      createdAt: "2026-04-29T10:00:00Z"
+                    - id: 2
+                      title: "Men's Sherwani — Navy Blue"
+                      imageUrl: "https://storage.supabase.co/portfolio/sherwani1.jpg"
+                      category: "Wedding"
+                      isPublic: true
+                      createdAt: "2026-04-28T10:00:00Z"
+
+  /portfolio/public/{shopId}:
+    get:
+      tags: [Portfolio]
+      summary: Public portfolio by shop ID — NO AUTH REQUIRED
+      description: Accessible by anyone. Used for sharing portfolio link with customers.
+      operationId: getPublicPortfolioById
+      security: []
+      parameters:
+        - name: shopId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Public portfolio retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Portfolio retrieved successfully
+                data:
+                  shop:
+                    name: "Siddia Tailor Shop"
+                    bio: "We specialize in custom-made outfits"
+                    whatsappNumber: "+919705116606"
+                    instagramUrl: "https://instagram.com/siddia_boutique"
+                  items:
+                    - id: 1
+                      title: "Bridal Lehenga"
+                      imageUrl: "https://storage.supabase.co/portfolio/bridal1.jpg"
+                      category: "Bridal"
+                    - id: 2
+                      title: "Men's Sherwani"
+                      imageUrl: "https://storage.supabase.co/portfolio/sherwani1.jpg"
+                      category: "Wedding"
+
+  /portfolio/public/slug/{slug}:
+    get:
+      tags: [Portfolio]
+      summary: Public portfolio by shop slug — NO AUTH REQUIRED
+      description: Friendly URL for sharing. e.g. /portfolio/public/slug/siddia-tailor-shop
+      operationId: getPublicPortfolioBySlug
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "siddia-tailor-shop"
+      responses:
+        '200':
+          description: Public portfolio retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Portfolio retrieved successfully
+                data:
+                  shop:
+                    name: "Siddia Tailor Shop"
+                    slug: "siddia-tailor-shop"
+                    bio: "We specialize in custom-made outfits"
+                    whatsappNumber: "+919705116606"
+                  items:
+                    - id: 1
+                      title: "Bridal Lehenga"
+                      imageUrl: "https://storage.supabase.co/portfolio/bridal1.jpg"
+                      category: "Bridal"
+        '404':
+          description: Shop not found
+          content:
+            application/json:
+              example:
+                success: false
+                message: Shop not found
+                error:
+                  code: SHOP_NOT_FOUND
+
+  /portfolio/{id}:
+    delete:
+      tags: [Portfolio]
+      summary: Delete portfolio item
+      operationId: deletePortfolioItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Portfolio item deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Portfolio item deleted successfully
+                data: null
+
+  # ══════════════════════════════════════════════════════
+  # STAFF — 4 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /staff:
+    post:
+      tags: [Staff]
+      summary: Add staff member
+      operationId: createStaff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                phone:
+                  type: string
+                role:
+                  type: string
+                  enum: [manager, cutter, stitcher, helper, staff]
+                  default: staff
+                permissions:
+                  type: object
+                  properties:
+                    viewOrders:
+                      type: boolean
+                    createOrders:
+                      type: boolean
+                    editMeasurements:
+                      type: boolean
+                    accessBilling:
+                      type: boolean
+                    accessReports:
+                      type: boolean
+            example:
+              name: "Raju Kumar"
+              phone: "+919876543211"
+              role: "cutter"
+              permissions:
+                viewOrders: true
+                createOrders: false
+                editMeasurements: true
+                accessBilling: false
+                accessReports: false
+      responses:
+        '201':
+          description: Staff member created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Staff created successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  name: "Raju Kumar"
+                  phone: "+919876543211"
+                  role: "cutter"
+                  permissions:
+                    viewOrders: true
+                    createOrders: false
+                    editMeasurements: true
+                    accessBilling: false
+                    accessReports: false
+                  isActive: true
+                  createdAt: "2026-04-29T10:00:00Z"
+
+    get:
+      tags: [Staff]
+      summary: Get all staff for shop
+      operationId: getStaff
+      responses:
+        '200':
+          description: Staff list retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Staff retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      name: "Raju Kumar"
+                      phone: "+919876543211"
+                      role: "cutter"
+                      isActive: true
+                      permissions:
+                        viewOrders: true
+                        createOrders: false
+                    - id: 2
+                      name: "Amit Singh"
+                      phone: "+919876543212"
+                      role: "stitcher"
+                      isActive: true
+                      permissions:
+                        viewOrders: true
+                        createOrders: false
+
+  /staff/{id}:
+    put:
+      tags: [Staff]
+      summary: Update staff member
+      operationId: updateStaff
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                phone:
+                  type: string
+                role:
+                  type: string
+                  enum: [manager, cutter, stitcher, helper, staff]
+                permissions:
+                  type: object
+                is_active:
+                  type: boolean
+            example:
+              role: "manager"
+              is_active: true
+              permissions:
+                viewOrders: true
+                createOrders: true
+                editMeasurements: true
+                accessBilling: true
+                accessReports: false
+      responses:
+        '200':
+          description: Staff updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Staff updated successfully
+                data:
+                  id: 1
+                  name: "Raju Kumar"
+                  role: "manager"
+                  isActive: true
+                  permissions:
+                    viewOrders: true
+                    createOrders: true
+                    editMeasurements: true
+                    accessBilling: true
+                    accessReports: false
+                  updatedAt: "2026-04-29T14:00:00Z"
+
+    delete:
+      tags: [Staff]
+      summary: Delete staff member
+      operationId: deleteStaff
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Staff deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Staff deleted successfully
+                data: null
+
+  # ══════════════════════════════════════════════════════
+  # NOTIFICATION — 5 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /notification:
+    get:
+      tags: [Notification]
+      summary: Get notifications for shop
+      operationId: getNotifications
+      parameters:
+        - name: is_read
+          in: query
+          description: Filter unread only (pass false)
+          schema:
+            type: boolean
+          example: false
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+          example: 20
+      responses:
+        '200':
+          description: Notifications retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Notifications retrieved successfully
+                data:
+                  items:
+                    - id: 3
+                      type: "order_status"
+                      title: "Order Ready for Pickup"
+                      body: "Order #SID001 for Mohammed Ali is ready for pickup."
+                      data:
+                        orderId: 1
+                        orderNumber: "SID001"
+                      isRead: false
+                      createdAt: "2026-04-29T15:00:00Z"
+                    - id: 2
+                      type: "delivery_due"
+                      title: "Delivery Due Today"
+                      body: "You have 2 orders due for delivery today."
+                      isRead: false
+                      createdAt: "2026-04-29T08:00:00Z"
+                    - id: 1
+                      type: "payment"
+                      title: "Payment Received"
+                      body: "₹500 received for Order #SID001"
+                      isRead: true
+                      createdAt: "2026-04-28T10:00:00Z"
+                  unread_count: 2
+
+  /notification/{id}/read:
+    put:
+      tags: [Notification]
+      summary: Mark single notification as read
+      operationId: markNotificationRead
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 3
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              example:
+                success: true
+                message: Notification marked as read
+                data: null
+
+  /notification/read-all:
+    put:
+      tags: [Notification]
+      summary: Mark all notifications as read
+      operationId: markAllNotificationsRead
+      responses:
+        '200':
+          description: All notifications marked as read
+          content:
+            application/json:
+              example:
+                success: true
+                message: All notifications marked as read
+                data:
+                  updatedCount: 5
+
+  /notification/push-token:
+    post:
+      tags: [Notification]
+      summary: Save Expo push notification token
+      description: Saves device push token for sending push notifications. Call after app login.
+      operationId: savePushToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                platform:
+                  type: string
+                  enum: [ios, android, web]
+            example:
+              token: "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
+              platform: "android"
+      responses:
+        '200':
+          description: Push token saved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Push token saved successfully
+                data: null
+
+  /notification/{id}:
+    delete:
+      tags: [Notification]
+      summary: Delete notification
+      operationId: deleteNotification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Notification deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Notification deleted successfully
+                data: null
+
+  # ══════════════════════════════════════════════════════
+  # GALLERY — 7 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /gallery/folder:
+    post:
+      tags: [Gallery]
+      summary: Create gallery folder
+      operationId: createGalleryFolder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+            example:
+              name: "Bridal Collection 2026"
+      responses:
+        '201':
+          description: Folder created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Gallery folder created successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  name: "Bridal Collection 2026"
+                  createdAt: "2026-04-29T10:00:00Z"
+
+    get:
+      tags: [Gallery]
+      summary: Get all gallery folders
+      operationId: getGalleryFolders
+      responses:
+        '200':
+          description: Folders retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Gallery folders retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      name: "Bridal Collection 2026"
+                      createdAt: "2026-04-29T10:00:00Z"
+                    - id: 2
+                      name: "Casual Wear"
+                      createdAt: "2026-04-20T10:00:00Z"
+                    - id: 3
+                      name: "Wedding Outfits"
+                      createdAt: "2026-04-15T10:00:00Z"
+
+  /gallery/folder/{id}:
+    put:
+      tags: [Gallery]
+      summary: Update gallery folder name
+      operationId: updateGalleryFolder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+            example:
+              name: "Bridal & Wedding 2026"
+      responses:
+        '200':
+          description: Folder updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Gallery folder updated successfully
+                data:
+                  id: 1
+                  name: "Bridal & Wedding 2026"
+
+    delete:
+      tags: [Gallery]
+      summary: Delete gallery folder and all its images
+      operationId: deleteGalleryFolder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Folder and images deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Gallery folder and its images deleted successfully
+                data:
+                  deletedImages: 5
+
+  /gallery/image:
+    post:
+      tags: [Gallery]
+      summary: Add image to gallery
+      operationId: addGalleryImage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imageUrl]
+              properties:
+                imageUrl:
+                  type: string
+                folderId:
+                  type: integer
+                  nullable: true
+                caption:
+                  type: string
+            example:
+              imageUrl: "https://storage.supabase.co/gallery/bridal_front.jpg"
+              folderId: 1
+              caption: "Bridal lehenga front view — red mirror work"
+      responses:
+        '201':
+          description: Image added to gallery
+          content:
+            application/json:
+              example:
+                success: true
+                message: Gallery image added successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  folderId: 1
+                  imageUrl: "https://storage.supabase.co/gallery/bridal_front.jpg"
+                  caption: "Bridal lehenga front view — red mirror work"
+                  createdAt: "2026-04-29T10:00:00Z"
+
+    get:
+      tags: [Gallery]
+      summary: Get gallery images (optionally filtered by folder)
+      operationId: getGalleryImages
+      parameters:
+        - name: folderId
+          in: query
+          description: Filter by folder. Omit to get all images.
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Gallery images retrieved
+          content:
+            application/json:
+              example:
+                success: true
+                message: Gallery images retrieved successfully
+                data:
+                  items:
+                    - id: 1
+                      folderId: 1
+                      imageUrl: "https://storage.supabase.co/gallery/bridal_front.jpg"
+                      caption: "Bridal lehenga front view"
+                      createdAt: "2026-04-29T10:00:00Z"
+                    - id: 2
+                      folderId: 1
+                      imageUrl: "https://storage.supabase.co/gallery/bridal_back.jpg"
+                      caption: "Bridal lehenga back view"
+                      createdAt: "2026-04-29T10:05:00Z"
+
+  /gallery/image/{id}:
+    delete:
+      tags: [Gallery]
+      summary: Delete gallery image
+      operationId: deleteGalleryImage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Image deleted
+          content:
+            application/json:
+              example:
+                success: true
+                message: Gallery image deleted successfully
+                data: null
+
+  # ══════════════════════════════════════════════════════
+  # INVOICE — 3 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /invoice/order/{orderId}:
+    get:
+      tags: [Invoice]
+      summary: Get or create invoice for order
+      description: |
+        Gets existing invoice or creates new one automatically.
+        Generates unique share_token and share_url for WhatsApp sharing.
+        Customer can view invoice at share_url without logging in.
+      operationId: getOrCreateInvoice
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Invoice retrieved or created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Invoice retrieved successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  orderId: 1
+                  invoiceNumber: "INV001"
+                  orderNumber: "SID001"
+                  customerName: "Mohammed Ali"
+                  shopName: "Siddia Tailor Shop"
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 2
+                      price: 500.00
+                    - type: "pant"
+                      fabric: "Wool"
+                      quantity: 1
+                      price: 800.00
+                  totalAmount: 1800.00
+                  paidAmount: 500.00
+                  balanceDue: 1300.00
+                  shareToken: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  shareUrl: "http://localhost:5002/api/invoice/share/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  createdAt: "2026-04-29T10:00:00Z"
+
+  /invoice/order/{orderId}/whatsapp:
+    post:
+      tags: [Invoice]
+      summary: Generate WhatsApp share link for invoice
+      description: |
+        Generates pre-filled WhatsApp message with invoice link.
+        Open the returned whatsappUrl in the app to share directly.
+      operationId: getInvoiceWhatsAppLink
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: WhatsApp link generated
+          content:
+            application/json:
+              example:
+                success: true
+                message: WhatsApp link generated successfully
+                data:
+                  whatsappUrl: "whatsapp://send?phone=+919876543210&text=Hi%20Mohammed%20Ali!%20%F0%9F%A7%B5%0AYour%20order%20%23SID001%20details%3A%0AView%20invoice%3A%20http%3A%2F%2Flocalhost%3A5002%2Fapi%2Finvoice%2Fshare%2Fa1b2c3d4%0AThank%20you!%20%F0%9F%99%8F"
+                  shareUrl: "http://localhost:5002/api/invoice/share/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  shareToken: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  message: "Hi Mohammed Ali! 🧵\nYour order #SID001 details:\nView invoice: http://localhost:5002/api/invoice/share/a1b2c3d4\nThank you! 🙏"
+                  phone: "+919876543210"
+
+  /invoice/share/{shareToken}:
+    get:
+      tags: [Invoice]
+      summary: View shared invoice — NO AUTH REQUIRED
+      description: Public endpoint. Customer opens this link from WhatsApp to view their invoice.
+      operationId: viewSharedInvoice
+      security: []
+      parameters:
+        - name: shareToken
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      responses:
+        '200':
+          description: Invoice data for customer view
+          content:
+            application/json:
+              example:
+                success: true
+                message: Invoice retrieved successfully
+                data:
+                  invoiceNumber: "INV001"
+                  orderNumber: "SID001"
+                  customerName: "Mohammed Ali"
+                  shopName: "Siddia Tailor Shop"
+                  shopPhone: "+919705116606"
+                  items:
+                    - type: "shirt"
+                      fabric: "Cotton"
+                      quantity: 2
+                      price: 500.00
+                      subtotal: 1000.00
+                    - type: "pant"
+                      fabric: "Wool"
+                      quantity: 1
+                      price: 800.00
+                      subtotal: 800.00
+                  totalAmount: 1800.00
+                  paidAmount: 500.00
+                  balanceDue: 1300.00
+                  deliveryDate: "2026-05-15"
+                  status: "in_progress"
+                  createdAt: "2026-04-29T10:00:00Z"
+        '404':
+          description: Invoice not found
+          content:
+            application/json:
+              example:
+                success: false
+                message: Invoice not found
+                error:
+                  code: INVOICE_NOT_FOUND
+
+  # ══════════════════════════════════════════════════════
+  # UPLOAD — 1 endpoint
+  # ══════════════════════════════════════════════════════
+
+  /upload:
+    post:
+      tags: [Upload]
+      summary: Upload image file — with security validation
+      description: |
+        **Upload image for:**
+        - Cloth photos
+        - Measurement reference
+        - Portfolio showcase
+        - Customer/staff photos
+        
+        **Security Features:**
+        - Max file size: **10 MB**
+        - Allowed MIME types: jpeg, png, gif, webp
+        - Automatic virus/malware scanning
+        - Rate limited to prevent abuse
+        - Files stored with timestamp prefix for uniqueness
+        - Returns public URL for later reference
+        
+        **File Processing:**
+        - Original filename preserved in URL generation
+        - Duplicate uploads generate unique filenames
+        - Storage: /uploads directory on server
+        - Public access via /uploads/* endpoint
+        
+        **Response contains:**
+        - `url`: Public URL to use in order cloth_images or portfolio
+        - `filename`: Server-generated unique filename
+        - `size`: Actual file size in bytes
+        - `mimeType`: Detected MIME type
+      operationId: uploadImage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: |
+                    Image file (jpg, jpeg, png, gif, or webp)
+                    Max size: 10MB
+      responses:
+        '201':
+          description: File uploaded successfully
+          content:
+            application/json:
+              example:
+                success: true
+                message: File uploaded successfully
+                data:
+                  url: "http://localhost:5002/uploads/1715342400000_cloth_photo.jpg"
+                  filename: "1715342400000_cloth_photo.jpg"
+                  size: 245678
+                  mimeType: "image/jpeg"
+        '400':
+          description: Invalid file or missing
+          content:
+            application/json:
+              examples:
+                noFile:
+                  summary: No file provided
+                  value:
+                    success: false
+                    message: No image file provided
+                    error:
+                      code: INVALID_INPUT
+                invalidFormat:
+                  summary: Invalid file type
+                  value:
+                    success: false
+                    message: Only jpg, jpeg, png, gif, webp files are allowed
+                    error:
+                      code: INVALID_INPUT
+                fileTooLarge:
+                  summary: File exceeds size limit
+                  value:
+                    success: false
+                    message: File size exceeds 10MB limit
+                    error:
+                      code: INVALID_INPUT
+                      details:
+                        maxSize: "10485760"
+                        actualSize: 15728640
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableResponse'
+
+  # ══════════════════════════════════════════════════════
+  # SUBSCRIPTION — 6 endpoints
+  # ══════════════════════════════════════════════════════
+
+  /subscription/verify:
+    post:
+      tags: [Subscription]
+      summary: Verify subscription status — NO AUTH REQUIRED
+      description: Check subscription status for a shop. Used by frontend on app load.
+      operationId: verifySubscription
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                shopId:
+                  type: integer
+            example:
+              shopId: 1
+      responses:
+        '200':
+          description: Subscription status verified
+          content:
+            application/json:
+              example:
+                success: true
+                message: Subscription verified
+                data:
+                  shopId: 1
+                  planType: "free"
+                  status: "trial"
+                  isActive: true
+                  trialEndDate: "2026-05-29"
+                  daysRemaining: 30
+
+  /subscription/create:
+    post:
+      tags: [Subscription]
+      summary: Create subscription
+      operationId: createSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planType]
+              properties:
+                planType:
+                  type: string
+                  enum: [free, basic, premium, enterprise]
+                amount:
+                  type: number
+            example:
+              planType: "free"
+              amount: 0.00
+      responses:
+        '201':
+          description: Subscription created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Subscription created successfully
+                data:
+                  id: 1
+                  shopId: 1
+                  planType: "free"
+                  status: "trial"
+                  startDate: "2026-04-29"
+                  trialEndDate: "2026-05-29"
+                  amount: 0.00
+                  isActive: true
+                  createdAt: "2026-04-29T10:00:00Z"
+
+  /subscription/status:
+    get:
+      tags: [Subscription]
+      summary: Get current subscription status
+      operationId: getSubscriptionStatus
+      responses:
+        '200':
+          description: Subscription status
+          content:
+            application/json:
+              example:
+                success: true
+                message: Subscription status retrieved
+                data:
+                  id: 1
+                  shopId: 1
+                  planType: "free"
+                  status: "trial"
+                  startDate: "2026-04-29"
+                  trialEndDate: "2026-05-29"
+                  isActive: true
+                  daysRemaining: 30
+                  features:
+                    maxCustomers: 50
+                    maxOrders: 100
+                    hasPortfolio: true
+                    hasReports: false
+                    hasStaffManagement: false
+
+  /subscription/check-active:
+    post:
+      tags: [Subscription]
+      summary: Check if subscription is currently active
+      operationId: checkActiveSubscription
+      responses:
+        '200':
+          description: Active status checked
+          content:
+            application/json:
+              example:
+                success: true
+                message: Subscription check complete
+                data:
+                  isActive: true
+                  planType: "free"
+                  status: "trial"
+                  canCreateOrders: true
+                  canAddCustomers: true
+
+  /subscription/{subscriptionId}/status:
+    put:
+      tags: [Subscription]
+      summary: Update subscription status
+      operationId: updateSubscriptionStatus
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [active, inactive, cancelled]
+            example:
+              status: "active"
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              example:
+                success: true
+                message: Subscription status updated
+                data:
+                  id: 1
+                  status: "active"
+                  updatedAt: "2026-04-29T10:00:00Z"
+
+  /subscription/{subscriptionId}:
+    delete:
+      tags: [Subscription]
+      summary: Cancel subscription
+      operationId: cancelSubscription
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Subscription cancelled
+          content:
+            application/json:
+              example:
+                success: true
+                message: Subscription cancelled successfully
+                data:
+                  id: 1
+                  status: "cancelled"
+                  cancelledAt: "2026-04-29T10:00:00Z"

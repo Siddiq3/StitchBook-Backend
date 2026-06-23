@@ -1,0 +1,827 @@
+{
+  "info": {
+    "_postman_id": "tailor-app-backend-api",
+    "name": "Tailor Management Backend API",
+    "description": "Complete API collection for Tailor Management SaaS Backend\n\nIMPORTANT:\n1. Import this into Postman\n2. Set Base URL variable\n3. Get JWT token from login endpoint\n4. Use token in other requests\n\nSetup:\n- File > Import > Select this JSON\n- Or paste into Postman directly",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "description": "User authentication endpoints",
+      "item": [
+        {
+          "name": "1. Login / Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"9876543210\",\n  \"firebase_uid\": \"firebase_uid_demo_123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Login or register a user with phone and Firebase UID\n\nAfter OTP verification on frontend:\n- Frontend sends firebase_uid\n- Backend creates user if new\n- Returns JWT token\n\nResponse will contain:\n- user (id, phone, created_at)\n- token (use in Authorization header)"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Verify Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{jwt_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/verify-token",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "verify-token"]
+            },
+            "description": "Verify if a JWT token is valid (public endpoint)"
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Auth Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/profile",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "Get authenticated user profile (requires JWT token)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "User Management",
+      "description": "User profile and information endpoints",
+      "item": [
+        {
+          "name": "1. Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": ["{{base_url}}"],
+              "path": ["user", "profile"]
+            },
+            "description": "Get current user profile"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Update User Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"9876543211\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/user/profile",
+              "host": ["{{base_url}}"],
+              "path": ["user", "profile"]
+            },
+            "description": "Update user profile information"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Shop Management",
+      "description": "Shop creation and management endpoints",
+      "item": [
+        {
+          "name": "1. Create Shop",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Fashion Tailor Studio\",\n  \"location\": \"Mumbai, Maharashtra\",\n  \"phone\": \"9876543210\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/shop/create",
+              "host": ["{{base_url}}"],
+              "path": ["shop", "create"]
+            },
+            "description": "Create a new shop for the authenticated user\n\nNote: Each user can have only ONE shop"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get My Shop",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/shop",
+              "host": ["{{base_url}}"],
+              "path": ["shop"]
+            },
+            "description": "Get the authenticated user's shop"
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Shop by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/shop/1",
+              "host": ["{{base_url}}"],
+              "path": ["shop", "1"]
+            },
+            "description": "Get shop by ID (replace 1 with actual shop ID)"
+          },
+          "response": []
+        },
+        {
+          "name": "4. Update Shop",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Premium Tailor Studio\",\n  \"location\": \"Mumbai, Bandra\",\n  \"phone\": \"9876543210\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/shop/1",
+              "host": ["{{base_url}}"],
+              "path": ["shop", "1"]
+            },
+            "description": "Update shop details"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Customer Management",
+      "description": "Customer CRUD operations",
+      "item": [
+        {
+          "name": "1. Add Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shop_id\": 1,\n  \"name\": \"John Doe\",\n  \"phone\": \"9123456789\",\n  \"notes\": \"Prefers cotton fabric, standard measurements\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/customer/add",
+              "host": ["{{base_url}}"],
+              "path": ["customer", "add"]
+            },
+            "description": "Add a new customer to the shop"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get Customer Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/customer/1",
+              "host": ["{{base_url}}"],
+              "path": ["customer", "1"]
+            },
+            "description": "Get customer details by ID"
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get All Customers (Paginated)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/customer/shop/1?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["customer", "shop", "1"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Get all customers for a shop with pagination\n\nQuery params:\n- page: page number (default: 1)\n- limit: records per page (default: 20)"
+          },
+          "response": []
+        },
+        {
+          "name": "4. Search Customers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/customer/search/1?q=John",
+              "host": ["{{base_url}}"],
+              "path": ["customer", "search", "1"],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "John"
+                }
+              ]
+            },
+            "description": "Search customers by name or phone"
+          },
+          "response": []
+        },
+        {
+          "name": "5. Update Customer",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe Updated\",\n  \"phone\": \"9123456789\",\n  \"notes\": \"Updated notes\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/customer/1",
+              "host": ["{{base_url}}"],
+              "path": ["customer", "1"]
+            },
+            "description": "Update customer information"
+          },
+          "response": []
+        },
+        {
+          "name": "6. Delete Customer",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/customer/1",
+              "host": ["{{base_url}}"],
+              "path": ["customer", "1"]
+            },
+            "description": "Delete a customer"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Measurements",
+      "description": "Dynamic measurement storage",
+      "item": [
+        {
+          "name": "1. Add Measurement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": 1,\n  \"measurements_data\": {\n    \"chest\": \"42\",\n    \"waist\": \"36\",\n    \"shoulder\": \"18\",\n    \"length\": \"28\",\n    \"sleeves\": \"20\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/measurement/add",
+              "host": ["{{base_url}}"],
+              "path": ["measurement", "add"]
+            },
+            "description": "Add measurements for a customer\n\nFlexible JSON fields - can include any custom measurements"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get Latest Measurement",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/measurement/latest/1",
+              "host": ["{{base_url}}"],
+              "path": ["measurement", "latest", "1"]
+            },
+            "description": "Get the latest measurement for a customer"
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get All Measurements",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/measurement/1",
+              "host": ["{{base_url}}"],
+              "path": ["measurement", "1"]
+            },
+            "description": "Get all measurements (history) for a customer"
+          },
+          "response": []
+        },
+        {
+          "name": "4. Update Measurement",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"measurements_data\": {\n    \"chest\": \"42\",\n    \"waist\": \"36\",\n    \"shoulder\": \"18\",\n    \"length\": \"29\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/measurement/1",
+              "host": ["{{base_url}}"],
+              "path": ["measurement", "1"]
+            },
+            "description": "Update measurement data"
+          },
+          "response": []
+        },
+        {
+          "name": "5. Delete Measurement",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/measurement/1",
+              "host": ["{{base_url}}"],
+              "path": ["measurement", "1"]
+            },
+            "description": "Delete a measurement record"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "description": "Order management and tracking",
+      "item": [
+        {
+          "name": "1. Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_id\": 1,\n  \"shop_id\": 1,\n  \"description\": \"Shirt stitching with collar\",\n  \"price\": 500,\n  \"delivery_date\": \"2026-04-25\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/order/create",
+              "host": ["{{base_url}}"],
+              "path": ["order", "create"]
+            },
+            "description": "Create a new stitching order"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get Order Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/order/1",
+              "host": ["{{base_url}}"],
+              "path": ["order", "1"]
+            },
+            "description": "Get order details by ID"
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Shop Orders (with Status Filter)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/order/shop/1?status=pending&page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["order", "shop", "1"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Get all orders for a shop\n\nQuery params:\n- status: pending, stitching, or completed (optional)\n- page: page number\n- limit: records per page"
+          },
+          "response": []
+        },
+        {
+          "name": "4. Get Customer Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/order/customer/1?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["order", "customer", "1"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Get all orders for a specific customer"
+          },
+          "response": []
+        },
+        {
+          "name": "5. Update Order Status",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"stitching\",\n  \"delivery_date\": \"2026-04-26\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/order/1",
+              "host": ["{{base_url}}"],
+              "path": ["order", "1"]
+            },
+            "description": "Update order status\n\nStatus options: pending, stitching, completed"
+          },
+          "response": []
+        },
+        {
+          "name": "6. Get Order Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/order/stats/1",
+              "host": ["{{base_url}}"],
+              "path": ["order", "stats", "1"]
+            },
+            "description": "Get order statistics for a shop (count by status)"
+          },
+          "response": []
+        },
+        {
+          "name": "7. Delete Order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/order/1",
+              "host": ["{{base_url}}"],
+              "path": ["order", "1"]
+            },
+            "description": "Delete an order"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Subscriptions",
+      "description": "Subscription and payment management",
+      "item": [
+        {
+          "name": "1. Create Subscription (After Payment)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"premium\",\n  \"razorpay_subscription_id\": \"sub_1234567890\",\n  \"status\": \"active\",\n  \"expiry_date\": \"2026-12-31\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/subscription/create",
+              "host": ["{{base_url}}"],
+              "path": ["subscription", "create"]
+            },
+            "description": "Create subscription after Razorpay payment"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get Subscription Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/subscription/status",
+              "host": ["{{base_url}}"],
+              "path": ["subscription", "status"]
+            },
+            "description": "Get current subscription status for user"
+          },
+          "response": []
+        },
+        {
+          "name": "3. Verify Subscription (Razorpay)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"razorpay_subscription_id\": \"sub_1234567890\",\n  \"plan\": \"premium\",\n  \"status\": \"active\",\n  \"expiry_date\": \"2026-12-31\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/subscription/verify",
+              "host": ["{{base_url}}"],
+              "path": ["subscription", "verify"]
+            },
+            "description": "Verify subscription after Razorpay payment (public endpoint)\n\nThis endpoint is called by Razorpay webhook"
+          },
+          "response": []
+        },
+        {
+          "name": "4. Check if Subscription Active",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/subscription/check-active",
+              "host": ["{{base_url}}"],
+              "path": ["subscription", "check-active"]
+            },
+            "description": "Check if user has active subscription"
+          },
+          "response": []
+        },
+        {
+          "name": "5. Cancel Subscription",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/subscription/1",
+              "host": ["{{base_url}}"],
+              "path": ["subscription", "1"]
+            },
+            "description": "Cancel a subscription"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "description": "Server health and status",
+      "item": [
+        {
+          "name": "Server Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Check if server is running (no authentication needed)"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:5000/api",
+      "type": "string",
+      "description": "Backend API base URL"
+    },
+    {
+      "key": "jwt_token",
+      "value": "",
+      "type": "string",
+      "description": "JWT token from login endpoint - Set this after login for other requests"
+    }
+  ]
+}
