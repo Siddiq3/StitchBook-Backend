@@ -8,6 +8,10 @@ const cors = require('cors');
 const getAllowedOrigins = () => {
   const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL;
   if (!raw) {
+    if (process.env.NODE_ENV === 'production') {
+      return [];
+    }
+
     return [
       'http://localhost:3000',
       'http://localhost:5000',

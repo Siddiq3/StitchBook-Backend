@@ -239,7 +239,16 @@ class SubscriptionService {
   }
 
   static getUpgradePageBaseUrl() {
-    const configured = process.env.WEB_APP_URL || process.env.FRONTEND_URL || process.env.FRONTEND_URLS?.split(',').find(Boolean) || 'http://localhost:5173';
+    const configured =
+      process.env.WEB_APP_URL ||
+      process.env.FRONTEND_URL ||
+      process.env.FRONTEND_URLS?.split(',').find(Boolean) ||
+      (process.env.NODE_ENV === 'production' ? null : 'http://localhost:5173');
+
+    if (!configured) {
+      throw new Error('WEB_APP_URL is required to create upgrade sessions');
+    }
+
     return String(configured).replace(/\/$/, '');
   }
 

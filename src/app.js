@@ -70,8 +70,35 @@ app.use((req, res, next) => {
 app.use(globalLimiter);
 
 // Health check route
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'StitchBook backend is running',
+    health: '/health',
+    api: '/api',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api', (req, res) => {
+  res.json({
+    success: true,
+    message: 'StitchBook API is running',
+    routes: [
+      '/api/auth',
+      '/api/shop',
+      '/api/customer',
+      '/api/order',
+      '/api/subscription',
+      '/api/dashboard',
+    ],
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({
+    success: true,
     status: 'OK',
     message: 'Server is running',
     timestamp: new Date().toISOString(),
