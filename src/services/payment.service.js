@@ -26,9 +26,14 @@ class PaymentService {
 
     const payableAmount = Number(amount || order.balance_due || 0);
     const balanceDue = Number(order.balance_due || 0);
+    const payableAmountPaise = Math.round(payableAmount * 100);
 
     if (!payableAmount || payableAmount <= 0) {
       throw new Error('Payment amount must be greater than zero');
+    }
+
+    if (payableAmountPaise < 100) {
+      throw new Error('Payment amount must be at least ₹1');
     }
 
     if (balanceDue > 0 && payableAmount > balanceDue) {
@@ -41,7 +46,7 @@ class PaymentService {
     });
 
     const razorpayOrder = await razorpay.orders.create({
-      amount: Math.round(payableAmount * 100),
+      amount: payableAmountPaise,
       currency: 'INR',
       receipt: `order_${order.id}_${Date.now()}`.slice(0, 40),
       notes: {

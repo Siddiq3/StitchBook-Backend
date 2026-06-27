@@ -91,6 +91,15 @@ exports.createUpgradeCheckout = async (req, res) => {
   } catch (error) {
     const errorMessage = error?.message || error?.error?.description || 'Failed to start checkout';
     logger.error('Create upgrade checkout error:', errorMessage);
+
+    if (errorMessage === 'Razorpay keys are not configured') {
+      return responder.error(res, 500, 'Razorpay keys are not configured');
+    }
+
+    if (error?.statusCode === 401 || errorMessage.toLowerCase().includes('authentication failed')) {
+      return responder.error(res, 401, 'Razorpay authentication failed');
+    }
+
     responder.error(res, 500, 'Failed to start checkout', errorMessage);
   }
 };
@@ -231,10 +240,10 @@ exports.createRazorpayOrder = async (req, res) => {
     const errorMessage = error?.message || error?.error?.description || String(error);
     logger.error('Create Razorpay order error:', errorMessage);
 
-    if (errorMessage.toLowerCase().includes('authentication failed')) {
+    if (error?.statusCode === 401 || errorMessage.toLowerCase().includes('authentication failed')) {
       return responder.error(
         res,
-        502,
+        401,
         'Razorpay authentication failed',
         'Check RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the backend .env. Use a matching test key id + test secret or live key id + live secret, then restart the backend.'
       );

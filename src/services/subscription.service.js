@@ -63,6 +63,15 @@ const PLAN_CONFIG = {
 const ACTIVE_PLAN_KEYS = Object.keys(PLAN_CONFIG);
 
 class SubscriptionService {
+  static normalizeRazorpayError(error) {
+    const message = error?.error?.description || error?.message || String(error);
+    const statusCode = Number(error?.statusCode || error?.status || error?.error?.statusCode || 500);
+    const normalized = new Error(message);
+    normalized.statusCode = statusCode;
+    normalized.isRazorpayError = true;
+    return normalized;
+  }
+
   static getRazorpayClient() {
     if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
       throw new Error('Razorpay keys are not configured');
@@ -288,17 +297,27 @@ class SubscriptionService {
     const session = await this.validateUpgradeSession(sessionId);
     const planConfig = this.getPlanConfig(session.plan);
     const razorpay = this.getRazorpayClient();
+    const amountPaise = Math.round(Number(planConfig.amount) * 100);
 
-    const order = await razorpay.orders.create({
-      amount: planConfig.amount * 100,
-      currency: 'INR',
-      receipt: `upgrade_${session.userId}_${Date.now()}`.slice(0, 40),
-      notes: {
-        stitch_upgrade_session_id: sessionId,
-        stitch_plan: session.plan,
-        stitch_user_id: String(session.userId),
-      },
-    });
+    if (amountPaise < 100) {
+      throw new Error('Payment amount must be at least ₹1');
+    }
+
+    let order;
+    try {
+      order = await razorpay.orders.create({
+        amount: amountPaise,
+        currency: 'INR',
+        receipt: `upgrade_${session.userId}_${Date.now()}`.slice(0, 40),
+        notes: {
+          stitch_upgrade_session_id: sessionId,
+          stitch_plan: session.plan,
+          stitch_user_id: String(session.userId),
+        },
+      });
+    } catch (error) {
+      throw this.normalizeRazorpayError(error);
+    }
 
     const updatedSession = {
       userId: session.userId,
@@ -306,7 +325,7 @@ class SubscriptionService {
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
       razorpayOrderId: order.id,
-      amount: planConfig.amount * 100,
+      amount: amountPaise,
       currency: 'INR',
     };
 
@@ -315,7 +334,7 @@ class SubscriptionService {
 
     return {
       keyId: process.env.RAZORPAY_KEY_ID,
-      amount: planConfig.amount * 100,
+      amount: amountPaise,
       currency: 'INR',
       orderId: order.id,
       plan: session.plan,
@@ -557,9 +576,14 @@ class SubscriptionService {
     try {
       const plan = this.getPlanConfig(billingCycle);
       const amount = plan.amount;
+      const amountPaise = Math.round(Number(amount) * 100);
 
       if (!shopId) {
         throw new Error('Missing shopId/userId for Razorpay order creation');
+      }
+
+      if (amountPaise < 100) {
+        throw new Error('Payment amount must be at least ₹1');
       }
 
       if (!isRedisReady()) {
@@ -568,16 +592,21 @@ class SubscriptionService {
 
       const razorpay = this.getRazorpayClient();
 
-      const order = await razorpay.orders.create({
-        amount: amount * 100, // paise
-        currency: 'INR',
-        receipt: `sub_${shopId}_${Date.now()}`.slice(0, 40),
-        notes: {
-          stitch_subscription: 'true',
-          stitch_shop_id: shopId.toString(),
-          billing_cycle: billingCycle,
-        },
-      });
+      let order;
+      try {
+        order = await razorpay.orders.create({
+          amount: amountPaise,
+          currency: 'INR',
+          receipt: `sub_${shopId}_${Date.now()}`.slice(0, 40),
+          notes: {
+            stitch_subscription: 'true',
+            stitch_shop_id: shopId.toString(),
+            billing_cycle: billingCycle,
+          },
+        });
+      } catch (error) {
+        throw this.normalizeRazorpayError(error);
+      }
 
       const checkoutToken = crypto.randomBytes(32).toString('hex');
       const session = {
