@@ -5,6 +5,8 @@
 
 const cors = require('cors');
 
+const normalizeOrigin = (value) => String(value || '').trim().replace(/\/$/, '');
+
 const getAllowedOrigins = () => {
   const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL;
   if (!raw) {
@@ -23,11 +25,39 @@ const getAllowedOrigins = () => {
 
   return raw
     .split(',')
-    .map((item) => item.trim())
+    .map(normalizeOrigin)
     .filter(Boolean);
 };
 
 const allowedOrigins = getAllowedOrigins();
+const allowedOriginSet = new Set(allowedOrigins);
+
+const getAllowedVercelProjects = () => {
+  const raw = process.env.VERCEL_PROJECT_ORIGINS || '';
+  return raw
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+};
+
+const allowedVercelProjects = getAllowedVercelProjects();
+
+const isAllowedVercelPreview = (origin) => {
+  if (allowedVercelProjects.length === 0) {
+    return false;
+  }
+
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== 'https:' || !hostname.endsWith('.vercel.app')) {
+      return false;
+    }
+
+    return allowedVercelProjects.some((project) => hostname.startsWith(`${project}-`));
+  } catch (error) {
+    return false;
+  }
+};
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -35,11 +65,13 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin)) {
+    const normalizedOrigin = normalizeOrigin(origin);
+
+    if (allowedOriginSet.has(normalizedOrigin) || isAllowedVercelPreview(normalizedOrigin)) {
       return callback(null, true);
     }
 
-    return callback(new Error('CORS policy: This origin is not allowed')); 
+    return callback(new Error(`CORS policy: This origin is not allowed (${normalizedOrigin})`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
