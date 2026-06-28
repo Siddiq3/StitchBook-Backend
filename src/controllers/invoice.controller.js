@@ -4,8 +4,77 @@
  */
 
 const InvoiceModel = require('../models/invoice.model');
+const AuthorizationService = require('../services/authorization.service');
 const { parsePagination } = require('../utils/pagination');
 const logger = require('../utils/logger');
+
+const getWebAppUrl = () =>
+  (process.env.WEB_APP_URL || process.env.FRONTEND_URL || 'https://stitch-book-web.vercel.app').replace(/\/$/, '');
+
+const formatItemsList = (items) => {
+  const orderItems = Array.isArray(items) ? items : [];
+  if (!orderItems.length) return 'Tailoring order';
+
+  return orderItems.map((item, index) => {
+    const name = item.typeLabel || item.type || item.item_name || item.name || 'Item';
+    const quantity = Number(item.quantity || 1);
+    const price = Number(item.price || item.amount || 0);
+    return `${index + 1}. ${name} x ${quantity} - Rs ${price * quantity}`;
+  }).join('\n');
+};
+
+const buildInvoiceMessage = ({ order, customer, shop }) => {
+  const total = Number(order.total_amount || 0);
+  const paid = Number(order.advance_paid || 0);
+  const balance = Math.max(0, total - paid);
+  const orderNo = order.order_number || `#${order.id}`;
+  const delivery = order.delivery_date || 'To be confirmed';
+
+  return `Hi ${customer?.name || 'Customer'},
+
+Invoice for order ${orderNo}
+
+${formatItemsList(order.items)}
+
+Delivery: ${delivery}
+Total: Rs ${total}
+Paid: Rs ${paid}
+Balance: Rs ${balance}
+
+${balance > 0 ? 'Please clear the balance at delivery/pickup.' : 'Payment completed. Thank you.'}
+
+- ${shop?.name || 'StitchBook'}`;
+};
+
+const buildWhatsAppUrl = (phone, message) => {
+  const cleanPhone = String(phone || '').replace(/\D/g, '');
+  const fullPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const encodedMessage = encodeURIComponent(message || '');
+
+  if (!fullPhone) return `https://wa.me/?text=${encodedMessage}`;
+  return `https://wa.me/${fullPhone}?text=${encodedMessage}`;
+};
+
+const withShareFields = (invoice, order, customer, shop) => {
+  const shareUrl = `${getWebAppUrl()}/invoice/order/${order.id}`;
+  const message = buildInvoiceMessage({ order, customer, shop });
+
+  return {
+    ...invoice,
+    order_id: invoice?.order_id || order.id,
+    shop_id: invoice?.shop_id || order.shop_id,
+    customer_id: invoice?.customer_id || order.customer_id,
+    total_amount: invoice?.total_amount ?? order.total_amount,
+    amount_paid: invoice?.amount_paid ?? order.advance_paid ?? 0,
+    amount_due: invoice?.amount_due ?? Math.max(0, Number(order.total_amount || 0) - Number(order.advance_paid || 0)),
+    items: invoice?.items || order.items || [],
+    shareUrl,
+    share_url: shareUrl,
+    whatsappUrl: buildWhatsAppUrl(customer?.phone, message),
+    whatsapp_url: buildWhatsAppUrl(customer?.phone, message),
+    message,
+  };
+};
 
 class InvoiceController {
   /**
@@ -131,6 +200,70 @@ class InvoiceController {
   }
 
   /**
+   * Get invoice/share data by order ID
+   * GET /api/invoice/order/:orderId
+   */
+  static async getInvoiceByOrder(req, res) {
+    try {
+      const userId = req.user.id;
+      const { orderId } = req.params;
+      const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+      const shop = await AuthorizationService.getUserShop(userId);
+      const customer = order.customer_id
+        ? await AuthorizationService.verifyCustomerOwnership(userId, order.customer_id)
+        : null;
+      const invoice = await InvoiceModel.getInvoiceByOrderId(orderId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Invoice share data retrieved successfully',
+        data: withShareFields(invoice || {}, order, customer, shop),
+        error: {}
+      });
+    } catch (error) {
+      logger.error('Get invoice by order error:', error);
+      const statusCode = error.message.includes('Unauthorized') ? 403 : error.message.includes('not found') ? 404 : 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: statusCode === 500 ? 'Failed to retrieve invoice share data' : error.message,
+        error: { code: statusCode === 500 ? 'SERVER_ERROR' : 'NOT_FOUND', details: {} }
+      });
+    }
+  }
+
+  /**
+   * Get WhatsApp invoice URL by order ID
+   * POST /api/invoice/order/:orderId/whatsapp
+   */
+  static async getOrderInvoiceWhatsApp(req, res) {
+    try {
+      const userId = req.user.id;
+      const { orderId } = req.params;
+      const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+      const shop = await AuthorizationService.getUserShop(userId);
+      const customer = order.customer_id
+        ? await AuthorizationService.verifyCustomerOwnership(userId, order.customer_id)
+        : null;
+      const invoice = await InvoiceModel.getInvoiceByOrderId(orderId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'WhatsApp invoice link created',
+        data: withShareFields(invoice || {}, order, customer, shop),
+        error: {}
+      });
+    } catch (error) {
+      logger.error('Invoice WhatsApp link error:', error);
+      const statusCode = error.message.includes('Unauthorized') ? 403 : error.message.includes('not found') ? 404 : 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: statusCode === 500 ? 'Failed to create WhatsApp invoice link' : error.message,
+        error: { code: statusCode === 500 ? 'SERVER_ERROR' : 'NOT_FOUND', details: {} }
+      });
+    }
+  }
+
+  /**
    * Get all invoices for a shop
    * GET /api/invoices
    */
@@ -149,8 +282,8 @@ class InvoiceController {
         });
       }
 
-      const invoices = await InvoiceModel.getInvoicesByShop(shopId, status, customer_id, limit, offset);
-      const total = await InvoiceModel.getInvoiceCount(shopId, status);
+      const invoices = await InvoiceModel.getInvoicesByShop(shop_id, status, customer_id, limit, offset);
+      const total = await InvoiceModel.getInvoiceCount(shop_id, status);
 
       return res.status(200).json({
         success: true,
@@ -194,7 +327,7 @@ class InvoiceController {
         });
       }
 
-      const stats = await InvoiceModel.getInvoiceStats(shopId, start_date, end_date);
+      const stats = await InvoiceModel.getInvoiceStats(shop_id, start_date, end_date);
 
       return res.status(200).json({
         success: true,

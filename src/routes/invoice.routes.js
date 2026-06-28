@@ -142,6 +142,10 @@ router.get('/', InvoiceController.getInvoicesByShop);
  */
 router.get('/stats', InvoiceController.getInvoiceStats);
 
+router.get('/order/:orderId', InvoiceController.getInvoiceByOrder);
+
+router.post('/order/:orderId/whatsapp', InvoiceController.getOrderInvoiceWhatsApp);
+
 /**
  * @swagger
  * /api/invoices/number/{invoiceNumber}:

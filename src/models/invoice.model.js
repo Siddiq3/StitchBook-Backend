@@ -94,6 +94,26 @@ class InvoiceModel {
   }
 
   /**
+   * Get invoice by order ID
+   * @param {number} orderId - Order ID
+   * @returns {object} - Invoice data
+   */
+  static async getInvoiceByOrderId(orderId) {
+    const query = `
+      SELECT id, shop_id, invoice_number, order_id, customer_id, staff_id,
+             invoice_date, due_date, status, subtotal, tax_amount, discount_amount,
+             total_amount, amount_paid, amount_due, payment_method, notes, items,
+             created_at, updated_at
+      FROM invoices
+      WHERE order_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1;
+    `;
+
+    return db.queryRow(query, [orderId]);
+  }
+
+  /**
    * Get all invoices for a shop
    * @param {number} shopId - Shop ID
    * @param {string} status - Filter by status
