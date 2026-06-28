@@ -42,6 +42,16 @@ const getAllowedVercelProjects = () => {
 
 const allowedVercelProjects = getAllowedVercelProjects();
 
+const allowedNativeOrigins = new Set([
+  'app://stitchbook',
+  'stitchbook://',
+  'com.stitchbook.app://',
+  'capacitor://localhost',
+  'ionic://localhost',
+]);
+
+const isAllowedExpoOrigin = (origin) => /^exp:\/\/|^exps:\/\//.test(origin);
+
 const isAllowedVercelPreview = (origin) => {
   if (allowedVercelProjects.length === 0) {
     return false;
@@ -67,7 +77,12 @@ const corsOptions = {
 
     const normalizedOrigin = normalizeOrigin(origin);
 
-    if (allowedOriginSet.has(normalizedOrigin) || isAllowedVercelPreview(normalizedOrigin)) {
+    if (
+      allowedOriginSet.has(normalizedOrigin) ||
+      allowedNativeOrigins.has(normalizedOrigin) ||
+      isAllowedExpoOrigin(normalizedOrigin) ||
+      isAllowedVercelPreview(normalizedOrigin)
+    ) {
       return callback(null, true);
     }
 
