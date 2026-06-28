@@ -6,8 +6,9 @@
 const OrderModel = require('../models/order.model');
 const logger = require('../utils/logger');
 
-// Valid order statuses (matching database enum)
-const VALID_STATUSES = ['pending', 'in_progress', 'ready', 'delivered'];
+// Valid order statuses. Keep in_progress readable for older orders, but write the
+// tailoring-specific production flow from the app.
+const VALID_STATUSES = ['pending', 'cutting', 'stitching', 'ready', 'delivered', 'in_progress'];
 
 class OrderService {
   /**
@@ -166,16 +167,20 @@ class OrderService {
   static async getOrderStats(shopId) {
     try {
       const pending = await OrderModel.getOrderCountByStatus(shopId, 'pending');
-      const inProgress = await OrderModel.getOrderCountByStatus(shopId, 'in_progress');
+      const cutting = await OrderModel.getOrderCountByStatus(shopId, 'cutting');
+      const legacyInProgress = await OrderModel.getOrderCountByStatus(shopId, 'in_progress');
+      const stitching = await OrderModel.getOrderCountByStatus(shopId, 'stitching');
       const ready = await OrderModel.getOrderCountByStatus(shopId, 'ready');
       const delivered = await OrderModel.getOrderCountByStatus(shopId, 'delivered');
 
       return {
         pending,
-        in_progress: inProgress,
+        cutting: cutting + legacyInProgress,
+        stitching,
+        in_progress: cutting + legacyInProgress,
         ready,
         delivered,
-        total: pending + inProgress + ready + delivered,
+        total: pending + cutting + legacyInProgress + stitching + ready + delivered,
       };
     } catch (error) {
       logger.error('Error getting order stats:', error.message);

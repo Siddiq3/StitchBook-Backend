@@ -10,8 +10,9 @@ const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 const { parsePagination } = require('../utils/pagination');
 
-// Valid order status flow: pending → in_progress → ready → delivered
-const VALID_STATUSES = ['pending', 'in_progress', 'ready', 'delivered'];
+// Valid order status flow: pending → cutting → stitching → ready → delivered
+const VALID_STATUSES = ['pending', 'cutting', 'stitching', 'ready', 'delivered'];
+const normalizeStatus = (status) => status === 'in_progress' ? 'cutting' : status;
 
 /**
  * POST /order
@@ -225,27 +226,30 @@ exports.updateOrderStatus = async (req, res) => {
       return responder.error(res, 400, 'Status is required');
     }
 
-    if (!VALID_STATUSES.includes(status)) {
+    const normalizedStatus = normalizeStatus(status);
+    if (!VALID_STATUSES.includes(normalizedStatus)) {
       return responder.error(res, 400, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
     }
 
     // Verify ownership
     const existingOrder = await AuthorizationService.verifyOrderOwnership(userId, orderId);
 
-    // Validate status flow: pending → in_progress → ready → delivered
+    // Validate status flow: pending → cutting → stitching → ready → delivered
     const statusFlow = {
-      'pending': ['in_progress'],
-      'in_progress': ['ready'],
+      'pending': ['cutting'],
+      'in_progress': ['stitching'],
+      'cutting': ['stitching'],
+      'stitching': ['ready'],
       'ready': ['delivered'],
       'delivered': []
     };
 
     const allowedNextStatuses = statusFlow[existingOrder.status] || [];
-    if (!allowedNextStatuses.includes(status)) {
-      return responder.error(res, 400, `Invalid status transition from '${existingOrder.status}' to '${status}'. Allowed: ${allowedNextStatuses.join(', ') || 'none'}`);
+    if (!allowedNextStatuses.includes(normalizedStatus)) {
+      return responder.error(res, 400, `Invalid status transition from '${existingOrder.status}' to '${normalizedStatus}'. Allowed: ${allowedNextStatuses.join(', ') || 'none'}`);
     }
 
-    const order = await OrderService.updateOrder(orderId, { status });
+    const order = await OrderService.updateOrder(orderId, { status: normalizedStatus });
     responder.success(res, 200, 'Order status updated', order);
   } catch (error) {
     logger.error('Update order status error:', error.message);
