@@ -11,6 +11,20 @@ const logger = require('../utils/logger');
 const getWebAppUrl = () =>
   (process.env.WEB_APP_URL || process.env.FRONTEND_URL || 'https://stitch-book-web.vercel.app').replace(/\/$/, '');
 
+const formatDisplayDate = (value, fallback = 'To be confirmed') => {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'Asia/Kolkata'
+    });
+  }
+  return String(value).split('T')[0];
+};
+
 const formatItemsList = (items) => {
   const orderItems = Array.isArray(items) ? items : [];
   if (!orderItems.length) return 'Tailoring order';
@@ -28,7 +42,7 @@ const buildInvoiceMessage = ({ order, customer, shop }) => {
   const paid = Number(order.advance_paid || 0);
   const balance = Math.max(0, total - paid);
   const orderNo = order.order_number || `#${order.id}`;
-  const delivery = order.delivery_date || 'To be confirmed';
+  const delivery = formatDisplayDate(order.delivery_date);
 
   return `Hi ${customer?.name || 'Customer'},
 
