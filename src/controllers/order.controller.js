@@ -23,6 +23,54 @@ const STATUS_LABELS = {
   delivered: 'Delivered',
 };
 
+const getItemName = (item = {}, index = 0) =>
+  item.typeLabel || item.type || item.item_name || item.name || `Item ${index + 1}`;
+
+const getAssignedName = (item = {}, role) =>
+  role === 'cutter'
+    ? item.cutter_name || item.cutterName || item.assigned_cutter_name || null
+    : item.stitcher_name || item.stitcherName || item.assigned_stitcher_name || null;
+
+const getAssignedId = (item = {}, role) =>
+  role === 'cutter'
+    ? item.cutter_staff_id || item.cutterStaffId || item.assigned_cutter_id || null
+    : item.stitcher_staff_id || item.stitcherStaffId || item.assigned_stitcher_id || null;
+
+const createStaffAssignmentLogs = async ({ orderId, shopId, userId, previousItems = [], nextItems = [] }) => {
+  const roles = [
+    { key: 'cutter', label: 'Cutter' },
+    { key: 'stitcher', label: 'Stitcher' },
+  ];
+
+  for (const [index, nextItem] of nextItems.entries()) {
+    const previousItem = previousItems[index] || {};
+    const itemName = getItemName(nextItem, index);
+
+    for (const role of roles) {
+      const previousId = getAssignedId(previousItem, role.key);
+      const nextId = getAssignedId(nextItem, role.key);
+      const previousName = getAssignedName(previousItem, role.key);
+      const nextName = getAssignedName(nextItem, role.key);
+
+      if (!nextId || String(previousId || '') === String(nextId || '')) continue;
+
+      const action = previousId ? 'changed' : 'assigned';
+      const fromText = previousName ? ` from ${previousName}` : '';
+      const notes = `${role.label} ${action}${fromText} to ${nextName || 'staff'} for ${itemName}`;
+
+      await ActivityLogModel.createActivityLog({
+        order_id: orderId,
+        shop_id: shopId,
+        user_id: userId,
+        action_type: 'staff_assignment',
+        old_value: previousName || previousId || null,
+        new_value: nextName || nextId,
+        notes,
+      });
+    }
+  }
+};
+
 /**
  * POST /order
  * Create a new order for authenticated user's shop
@@ -203,9 +251,20 @@ exports.updateOrder = async (req, res) => {
     }
 
     // Verify ownership
-    await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const existingOrder = await AuthorizationService.verifyOrderOwnership(userId, orderId);
 
     const order = await OrderService.updateOrder(orderId, updateData);
+
+    if (Array.isArray(updateData.items)) {
+      await createStaffAssignmentLogs({
+        orderId,
+        shopId: existingOrder.shop_id,
+        userId,
+        previousItems: Array.isArray(existingOrder.items) ? existingOrder.items : [],
+        nextItems: updateData.items,
+      });
+    }
+
     responder.success(res, 200, 'Order updated', order);
   } catch (error) {
     logger.error('Update order error:', error.message);
