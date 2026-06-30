@@ -6,6 +6,7 @@
 
 const OrderService = require('../services/order.service');
 const AuthorizationService = require('../services/authorization.service');
+const ActivityLogModel = require('../models/activity.model');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 const { parsePagination } = require('../utils/pagination');
@@ -13,6 +14,14 @@ const { parsePagination } = require('../utils/pagination');
 // Valid order status flow: pending → cutting → stitching → ready → delivered
 const VALID_STATUSES = ['pending', 'cutting', 'stitching', 'ready', 'delivered'];
 const normalizeStatus = (status) => status === 'in_progress' ? 'cutting' : status;
+const STATUS_LABELS = {
+  pending: 'New Order',
+  in_progress: 'Cutting',
+  cutting: 'Cutting',
+  stitching: 'Stitching',
+  ready: 'Ready',
+  delivered: 'Delivered',
+};
 
 /**
  * POST /order
@@ -250,6 +259,17 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     const order = await OrderService.updateOrder(orderId, { status: normalizedStatus });
+
+    await ActivityLogModel.createActivityLog({
+      order_id: orderId,
+      shop_id: existingOrder.shop_id,
+      user_id: userId,
+      action_type: 'status_change',
+      old_value: existingOrder.status,
+      new_value: normalizedStatus,
+      notes: `Status changed from ${STATUS_LABELS[existingOrder.status] || existingOrder.status} to ${STATUS_LABELS[normalizedStatus] || normalizedStatus}`,
+    });
+
     responder.success(res, 200, 'Order status updated', order);
   } catch (error) {
     logger.error('Update order status error:', error.message);
