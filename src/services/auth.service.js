@@ -147,6 +147,20 @@ const createLoginResponse = async (user, meta = {}) => {
   };
 };
 
+const mergeAuthProvider = (currentProvider, providerToAdd) => {
+  const parts = new Set(
+    String(currentProvider || '')
+      .split('_')
+      .filter(Boolean)
+  );
+
+  parts.add(providerToAdd);
+  if (parts.has('firebase')) parts.add('mobile');
+
+  const ordered = ['google', 'mobile', 'firebase'].filter((part) => parts.has(part));
+  return ordered.length ? ordered.join('_') : providerToAdd;
+};
+
 class AuthService {
   static async loginWithGoogleToken(idToken, meta = {}) {
     try {
@@ -238,6 +252,115 @@ class AuthService {
       logger.error('MSG91 mobile authentication failed:', error.message);
       throw error;
     }
+  }
+
+  static async getAuthMethods(userId) {
+    const user = await UserModel.getUserById(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    return {
+      google: {
+        linked: Boolean(user.google_id),
+        email: user.email || null,
+        avatar: user.avatar || null,
+      },
+      mobile: {
+        linked: Boolean(user.phone),
+        phone: user.phone || null,
+      },
+      authProvider: user.auth_provider,
+    };
+  }
+
+  static async linkGoogleToUser(userId, idToken) {
+    if (!idToken) {
+      throw new Error('Google ID token is required');
+    }
+
+    const currentUser = await UserModel.getUserById(userId);
+    if (!currentUser) {
+      throw new Error('User not found');
+    }
+
+    const googleUser = await GoogleAuthService.verifyIdToken(idToken);
+    await assertStaffEmailCanLogin(googleUser.email);
+
+    const existingOwner = await UserModel.getIdentityOwner({
+      googleId: googleUser.googleId,
+      excludeUserId: userId,
+    });
+
+    if (existingOwner) {
+      const error = new Error('This Google account is already linked to another StitchBook account');
+      error.code = 'IDENTITY_ALREADY_LINKED';
+      throw error;
+    }
+
+    const emailOwner = await UserModel.getIdentityOwner({
+      email: googleUser.email,
+      excludeUserId: userId,
+    });
+
+    if (emailOwner) {
+      const error = new Error('This email is already used by another StitchBook account. Login to that account first; accounts are not merged automatically.');
+      error.code = 'EMAIL_ALREADY_USED';
+      throw error;
+    }
+
+    const user = await UserModel.updateUser(userId, {
+      email: googleUser.email || currentUser.email,
+      name: currentUser.name || googleUser.name,
+      google_id: googleUser.googleId,
+      avatar: googleUser.avatar || currentUser.avatar,
+      auth_provider: mergeAuthProvider(currentUser.auth_provider, 'google'),
+      last_login: new Date(),
+    });
+
+    return {
+      user: await formatUser(user),
+      methods: await this.getAuthMethods(userId),
+    };
+  }
+
+  static async linkMobileToUser(userId, reqId, otp) {
+    if (!reqId || !otp) {
+      throw new Error('OTP request id and OTP are required');
+    }
+
+    const currentUser = await UserModel.getUserById(userId);
+    if (!currentUser) {
+      throw new Error('User not found');
+    }
+
+    const { mobile } = await Msg91WidgetService.verifyMobileOtp(reqId, otp);
+    await assertStaffPhoneCanLogin(mobile);
+
+    const existingOwner = await UserModel.getIdentityOwner({
+      phone: mobile,
+      excludeUserId: userId,
+    });
+
+    if (existingOwner) {
+      const error = new Error('This mobile number is already linked to another StitchBook account');
+      error.code = 'PHONE_ALREADY_LINKED';
+      throw error;
+    }
+
+    const user = await UserModel.updateUser(userId, {
+      phone: mobile,
+      name: currentUser.name || `User ${mobile.slice(-4)}`,
+      auth_provider: mergeAuthProvider(currentUser.auth_provider, 'mobile'),
+      last_login: new Date(),
+    });
+
+    const linkedUser = await linkStaffAccountIfAllowed(user);
+
+    return {
+      user: await formatUser(linkedUser),
+      methods: await this.getAuthMethods(userId),
+    };
   }
 
   /**

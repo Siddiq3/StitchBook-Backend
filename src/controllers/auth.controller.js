@@ -98,6 +98,50 @@ exports.msg91MobileVerifyOtp = async (req, res) => {
   }
 };
 
+exports.getAuthMethods = async (req, res) => {
+  try {
+    const methods = await AuthService.getAuthMethods(req.user.id);
+    responder.success(res, 200, 'Auth methods retrieved', methods);
+  } catch (error) {
+    logger.warn('Get auth methods error:', error.message);
+    responder.error(res, 400, 'Unable to get auth methods', error.message);
+  }
+};
+
+exports.linkGoogle = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return responder.error(res, 400, 'Google ID token is required');
+    }
+
+    const result = await AuthService.linkGoogleToUser(req.user.id, idToken);
+    responder.success(res, 200, 'Google account linked', result);
+  } catch (error) {
+    logger.warn('Link Google error:', error.message);
+    const status = error.code === 'IDENTITY_ALREADY_LINKED' || error.code === 'EMAIL_ALREADY_USED' ? 409 : 400;
+    responder.error(res, status, 'Unable to link Google account', error.message);
+  }
+};
+
+exports.linkMobileVerifyOtp = async (req, res) => {
+  try {
+    const { reqId, otp } = req.body;
+
+    if (!reqId || !otp) {
+      return responder.error(res, 400, 'OTP request id and OTP are required');
+    }
+
+    const result = await AuthService.linkMobileToUser(req.user.id, reqId, otp);
+    responder.success(res, 200, 'Mobile number linked', result);
+  } catch (error) {
+    logger.warn('Link mobile error:', error.message);
+    const status = error.code === 'PHONE_ALREADY_LINKED' ? 409 : 400;
+    responder.error(res, status, 'Unable to link mobile number', error.message);
+  }
+};
+
 /**
  * POST /api/auth/login
  * Firebase OTP Login Endpoint

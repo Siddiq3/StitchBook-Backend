@@ -83,6 +83,26 @@ router.get('/profile', authMiddleware, authController.getProfile);
 router.put('/profile', authMiddleware, authController.updateProfile);
 
 /**
+ * GET /api/auth/methods
+ * List linked login methods for the current user.
+ */
+router.get('/methods', authMiddleware, authController.getAuthMethods);
+
+/**
+ * POST /api/auth/link/google
+ * Link a verified Google identity to the current account.
+ * Body: { idToken: "GOOGLE_ID_TOKEN" }
+ */
+router.post('/link/google', authMiddleware, loginLimiter, authController.linkGoogle);
+
+/**
+ * POST /api/auth/link/mobile/verify-otp
+ * Link a verified mobile number to the current account.
+ * Use public /msg91-mobile/send-otp first, then submit { reqId, otp } here.
+ */
+router.post('/link/mobile/verify-otp', authMiddleware, otpLimiter, authController.linkMobileVerifyOtp);
+
+/**
  * POST /api/auth/logout
  * Logout user
  * Header: Authorization: Bearer JWT_TOKEN

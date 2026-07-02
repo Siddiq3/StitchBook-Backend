@@ -178,6 +178,83 @@ class UserModel {
     }
   }
 
+  static async getUserByPhoneOrEmail(phone, email) {
+    try {
+      const conditions = [];
+      const values = [];
+
+      if (phone) {
+        values.push(phone);
+        conditions.push(`phone = $${values.length}`);
+      }
+
+      if (email) {
+        values.push(email);
+        conditions.push(`LOWER(email) = LOWER($${values.length})`);
+      }
+
+      if (conditions.length === 0) return null;
+
+      const query = `
+        SELECT id, phone, email, name, firebase_uid, google_id, avatar, auth_provider, shop_id,
+          trial_start_at, trial_ends_at, plan, subscription_status,
+          subscription_start_at, subscription_ends_at, last_login, created_at, updated_at
+        FROM users
+        WHERE ${conditions.join(' OR ')}
+        ORDER BY created_at ASC
+        LIMIT 1;
+      `;
+
+      return db.queryRow(query, values);
+    } catch (error) {
+      logger.error('Get user by phone/email error:', error.message);
+      throw error;
+    }
+  }
+
+  static async getIdentityOwner({ phone, email, googleId, excludeUserId = null }) {
+    try {
+      const conditions = [];
+      const values = [];
+
+      if (phone) {
+        values.push(phone);
+        conditions.push(`phone = $${values.length}`);
+      }
+      if (email) {
+        values.push(email);
+        conditions.push(`LOWER(email) = LOWER($${values.length})`);
+      }
+      if (googleId) {
+        values.push(googleId);
+        conditions.push(`google_id = $${values.length}`);
+      }
+
+      if (conditions.length === 0) return null;
+
+      let excludeClause = '';
+      if (excludeUserId) {
+        values.push(excludeUserId);
+        excludeClause = `AND id <> $${values.length}`;
+      }
+
+      const query = `
+        SELECT id, phone, email, name, firebase_uid, google_id, avatar, auth_provider, shop_id,
+          trial_start_at, trial_ends_at, plan, subscription_status,
+          subscription_start_at, subscription_ends_at, last_login, created_at, updated_at
+        FROM users
+        WHERE (${conditions.join(' OR ')}) ${excludeClause}
+        ORDER BY created_at ASC
+        LIMIT 1;
+      `;
+
+      return db.queryRow(query, values);
+    } catch (error) {
+      logger.error('Get identity owner error:', error.message);
+      throw error;
+    }
+  }
+
   /**
    * Update user
    * @param {number} userId - User ID
