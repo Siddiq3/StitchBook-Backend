@@ -103,6 +103,13 @@ router.post('/link/google', authMiddleware, loginLimiter, authController.linkGoo
 router.post('/link/mobile/verify-otp', authMiddleware, otpLimiter, authController.linkMobileVerifyOtp);
 
 /**
+ * POST /api/auth/link/mobile-token
+ * Link a mobile number already verified by the MSG91 mobile widget SDK.
+ * Body: { accessToken: "MSG91_WIDGET_ACCESS_TOKEN" }
+ */
+router.post('/link/mobile-token', authMiddleware, otpLimiter, authController.linkMobileAccessToken);
+
+/**
  * POST /api/auth/logout
  * Logout user
  * Header: Authorization: Bearer JWT_TOKEN

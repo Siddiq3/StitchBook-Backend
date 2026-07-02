@@ -142,6 +142,23 @@ exports.linkMobileVerifyOtp = async (req, res) => {
   }
 };
 
+exports.linkMobileAccessToken = async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+
+    if (!accessToken) {
+      return responder.error(res, 400, 'MSG91 widget access token is required');
+    }
+
+    const result = await AuthService.linkMobileAccessTokenToUser(req.user.id, accessToken);
+    responder.success(res, 200, 'Mobile number linked', result);
+  } catch (error) {
+    logger.warn('Link mobile token error:', error.message);
+    const status = error.code === 'PHONE_ALREADY_LINKED' ? 409 : 400;
+    responder.error(res, status, 'Unable to link mobile number', error.message);
+  }
+};
+
 /**
  * POST /api/auth/login
  * Firebase OTP Login Endpoint

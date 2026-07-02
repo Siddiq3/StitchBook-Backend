@@ -363,6 +363,45 @@ class AuthService {
     };
   }
 
+  static async linkMobileAccessTokenToUser(userId, accessToken) {
+    if (!accessToken) {
+      throw new Error('MSG91 widget access token is required');
+    }
+
+    const currentUser = await UserModel.getUserById(userId);
+    if (!currentUser) {
+      throw new Error('User not found');
+    }
+
+    const { mobile } = await Msg91WidgetService.verifyAccessToken(accessToken);
+    await assertStaffPhoneCanLogin(mobile);
+
+    const existingOwner = await UserModel.getIdentityOwner({
+      phone: mobile,
+      excludeUserId: userId,
+    });
+
+    if (existingOwner) {
+      const error = new Error('This mobile number is already linked to another StitchBook account');
+      error.code = 'PHONE_ALREADY_LINKED';
+      throw error;
+    }
+
+    const user = await UserModel.updateUser(userId, {
+      phone: mobile,
+      name: currentUser.name || `User ${mobile.slice(-4)}`,
+      auth_provider: mergeAuthProvider(currentUser.auth_provider, 'mobile'),
+      last_login: new Date(),
+    });
+
+    const linkedUser = await linkStaffAccountIfAllowed(user);
+
+    return {
+      user: await formatUser(linkedUser),
+      methods: await this.getAuthMethods(userId),
+    };
+  }
+
   /**
    * Login with Firebase ID Token
    * Main authentication endpoint
