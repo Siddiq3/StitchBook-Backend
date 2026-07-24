@@ -29,7 +29,11 @@ const phoneUtils = require('../utils/phoneUtils');
 const logger = require('../utils/logger');
 const { mergePermissions } = require('./permissions.service');
 
+const isStaffMobileLoginEnabled = () =>
+  String(process.env.ENABLE_STAFF_MOBILE_LOGIN || '').toLowerCase() === 'true';
+
 const linkStaffAccountIfAllowed = async (user) => {
+  if (!isStaffMobileLoginEnabled()) return user;
   if (!user?.phone) return user;
 
   const staff = await StaffModel.getStaffByPhone(user.phone);
@@ -74,6 +78,9 @@ const linkStaffEmailIfAllowed = async (user) => {
 const assertStaffPhoneCanLogin = async (phone) => {
   if (!phone) return;
   const staff = await StaffModel.getStaffByPhone(phone);
+  if (staff && staff.is_active && !isStaffMobileLoginEnabled()) {
+    throw new Error('Staff mobile login is not enabled. Please login with the staff Google email.');
+  }
   if (staff && staff.is_active && !staff.can_login) {
     throw new Error('This staff member does not have app login access');
   }
@@ -422,6 +429,7 @@ class AuthService {
 
       // Step 2: Normalize phone (should already be done, but double-check)
       const normalizedPhone = phoneUtils.normalizePhone(phone);
+      await assertStaffPhoneCanLogin(normalizedPhone);
 
       // Step 3: Find existing user by phone
       let user = await UserModel.getUserByPhone(normalizedPhone);
