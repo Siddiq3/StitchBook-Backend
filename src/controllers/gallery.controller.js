@@ -7,6 +7,15 @@ const GalleryModel = require('../models/gallery.model');
 const { parsePagination } = require('../utils/pagination');
 const logger = require('../utils/logger');
 
+const getAuthenticatedShopId = (req) => {
+  const rawShopId = req.user?.shop_id ?? req.user?.shopId;
+  if (rawShopId === undefined || rawShopId === null || rawShopId === '') {
+    return null;
+  }
+  const numericShopId = Number(rawShopId);
+  return Number.isNaN(numericShopId) ? null : numericShopId;
+};
+
 class GalleryController {
   /**
    * Create a new gallery item
@@ -15,6 +24,15 @@ class GalleryController {
   static async createGalleryItem(req, res) {
     try {
       const { shop_id, title, description, image_url, category, tags, is_active, order_index } = req.body;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
 
       // Validation
       if (!shop_id || !image_url) {
@@ -25,8 +43,17 @@ class GalleryController {
         });
       }
 
+      const requestedShopId = Number(shop_id);
+      if (Number.isNaN(requestedShopId) || requestedShopId !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only create gallery items for your own shop',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
       const galleryItem = await GalleryModel.createGalleryItem({
-        shop_id,
+        shop_id: requestedShopId,
         title,
         description,
         image_url,
@@ -59,6 +86,7 @@ class GalleryController {
   static async getGalleryById(req, res) {
     try {
       const { id } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const galleryItem = await GalleryModel.getGalleryById(id);
 
       if (!galleryItem) {
@@ -66,6 +94,14 @@ class GalleryController {
           success: false,
           message: 'Gallery item not found',
           error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(galleryItem.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this gallery item',
+          error: { code: 'FORBIDDEN', details: {} }
         });
       }
 
@@ -91,13 +127,30 @@ class GalleryController {
    */
   static async getGalleryByShop(req, res) {
     try {
-      const { shop_id } = req.query;
-      const shopId = Number(shop_id);
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const requestedShopId = req.query.shop_id !== undefined ? Number(req.query.shop_id) : authenticatedShopId;
+      const shopId = requestedShopId;
       const activeOnly = req.query.active_only === 'true';
       const category = req.query.category || null;
       const { limit, offset } = parsePagination(req, 50, 100);
 
-      if (!shop_id || Number.isNaN(shopId)) {
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (req.query.shop_id !== undefined && (Number.isNaN(shopId) || shopId !== authenticatedShopId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only access your own shop gallery',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (!shopId || Number.isNaN(shopId)) {
         return res.status(400).json({
           success: false,
           message: 'shop_id is required',
@@ -140,10 +193,27 @@ class GalleryController {
    */
   static async getCategories(req, res) {
     try {
-      const { shop_id } = req.query;
-      const shopId = Number(shop_id);
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const requestedShopId = req.query.shop_id !== undefined ? Number(req.query.shop_id) : authenticatedShopId;
+      const shopId = requestedShopId;
 
-      if (!shop_id || Number.isNaN(shopId)) {
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (req.query.shop_id !== undefined && (Number.isNaN(shopId) || shopId !== authenticatedShopId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only access your own shop categories',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (!shopId || Number.isNaN(shopId)) {
         return res.status(400).json({
           success: false,
           message: 'shop_id is required',
@@ -176,6 +246,7 @@ class GalleryController {
   static async updateGalleryItem(req, res) {
     try {
       const { id } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const { title, description, image_url, category, tags, is_active, order_index } = req.body;
 
       const existingItem = await GalleryModel.getGalleryById(id);
@@ -184,6 +255,14 @@ class GalleryController {
           success: false,
           message: 'Gallery item not found',
           error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(existingItem.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to update this gallery item',
+          error: { code: 'FORBIDDEN', details: {} }
         });
       }
 
@@ -220,6 +299,24 @@ class GalleryController {
   static async deleteGalleryItem(req, res) {
     try {
       const { id } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const existingItem = await GalleryModel.getGalleryById(id);
+
+      if (!existingItem) {
+        return res.status(404).json({
+          success: false,
+          message: 'Gallery item not found',
+          error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(existingItem.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to delete this gallery item',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
 
       const deleted = await GalleryModel.deleteGalleryItem(id);
 
@@ -253,7 +350,16 @@ class GalleryController {
    */
   static async reorderItems(req, res) {
     try {
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const { shop_id, item_orders } = req.body;
+
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
 
       if (!shop_id || !item_orders || !Array.isArray(item_orders)) {
         return res.status(400).json({
@@ -263,7 +369,16 @@ class GalleryController {
         });
       }
 
-      await GalleryModel.reorderItems(shopId, item_orders);
+      const requestedShopId = Number(shop_id);
+      if (Number.isNaN(requestedShopId) || requestedShopId !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only reorder your own shop gallery',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      await GalleryModel.reorderItems(requestedShopId, item_orders);
 
       return res.status(200).json({
         success: true,

@@ -3,10 +3,7 @@
  */
 
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key';
-const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d';
+const { JWT_SECRET, JWT_EXPIRY } = require('./env');
 
 /**
  * Generate JWT token

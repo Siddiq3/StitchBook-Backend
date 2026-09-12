@@ -7,11 +7,12 @@
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_change_this_in_production';
-const JWT_EXPIRY = process.env.JWT_EXPIRY || '15m'; // Short-lived access tokens for production
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your_super_secret_refresh_key';
-const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '90d'; // Trusted device session window
+const {
+  JWT_SECRET,
+  JWT_EXPIRY,
+  JWT_REFRESH_SECRET,
+  JWT_REFRESH_EXPIRY,
+} = require('../config/env');
 
 /**
  * Generate JWT token for authenticated user

@@ -7,6 +7,15 @@ const NotificationModel = require('../models/notification.model');
 const { parsePagination } = require('../utils/pagination');
 const logger = require('../utils/logger');
 
+const getAuthenticatedShopId = (req) => {
+  const rawShopId = req.user?.shop_id ?? req.user?.shopId;
+  if (rawShopId === undefined || rawShopId === null || rawShopId === '') {
+    return null;
+  }
+  const numericShopId = Number(rawShopId);
+  return Number.isNaN(numericShopId) ? null : numericShopId;
+};
+
 class NotificationController {
   /**
    * Create a new notification
@@ -15,6 +24,15 @@ class NotificationController {
   static async createNotification(req, res) {
     try {
       const { shop_id, user_id, title, message, type, data } = req.body;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
 
       // Validation
       if (!shop_id || !title || !message) {
@@ -25,8 +43,17 @@ class NotificationController {
         });
       }
 
+      const requestedShopId = Number(shop_id);
+      if (Number.isNaN(requestedShopId) || requestedShopId !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only create notifications for your own shop',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
       const notification = await NotificationModel.createNotification({
-        shop_id,
+        shop_id: requestedShopId,
         user_id,
         title,
         message,
@@ -57,6 +84,7 @@ class NotificationController {
   static async getNotificationById(req, res) {
     try {
       const { id } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const notification = await NotificationModel.getNotificationById(id);
 
       if (!notification) {
@@ -64,6 +92,14 @@ class NotificationController {
           success: false,
           message: 'Notification not found',
           error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(notification.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this notification',
+          error: { code: 'FORBIDDEN', details: {} }
         });
       }
 
@@ -89,10 +125,28 @@ class NotificationController {
    */
   static async getNotificationsByShop(req, res) {
     try {
-      const { shop_id } = req.query;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const requestedShopId = req.query.shop_id !== undefined ? Number(req.query.shop_id) : authenticatedShopId;
+      const shopId = requestedShopId;
       const { limit, offset } = parsePagination(req, 50, 100);
 
-      if (!shop_id) {
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (req.query.shop_id !== undefined && (Number.isNaN(shopId) || shopId !== authenticatedShopId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only access your own shop notifications',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (!shopId || Number.isNaN(shopId)) {
         return res.status(400).json({
           success: false,
           message: 'shop_id is required',
@@ -101,7 +155,7 @@ class NotificationController {
       }
 
       const notifications = await NotificationModel.getNotificationsByShop(shopId, limit, offset);
-      const unreadCount = await NotificationModel.getUnreadCount(shop_id);
+      const unreadCount = await NotificationModel.getUnreadCount(shopId);
 
       return res.status(200).json({
         success: true,
@@ -168,10 +222,28 @@ class NotificationController {
   static async markAsRead(req, res) {
     try {
       const { id } = req.params;
-
-      const notification = await NotificationModel.markAsRead(id);
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const notification = await NotificationModel.getNotificationById(id);
 
       if (!notification) {
+        return res.status(404).json({
+          success: false,
+          message: 'Notification not found',
+          error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(notification.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this notification',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      const updatedNotification = await NotificationModel.markAsRead(id);
+
+      if (!updatedNotification) {
         return res.status(404).json({
           success: false,
           message: 'Notification not found',
@@ -182,7 +254,7 @@ class NotificationController {
       return res.status(200).json({
         success: true,
         message: 'Notification marked as read',
-        data: notification,
+        data: updatedNotification,
         error: {}
       });
     } catch (error) {
@@ -201,8 +273,17 @@ class NotificationController {
    */
   static async markAllAsRead(req, res) {
     try {
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const { shop_id } = req.body;
       const userId = req.user.id;
+
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
 
       if (!shop_id) {
         return res.status(400).json({
@@ -212,7 +293,16 @@ class NotificationController {
         });
       }
 
-      const updatedCount = await NotificationModel.markAllAsRead(shop_id, userId);
+      const requestedShopId = Number(shop_id);
+      if (Number.isNaN(requestedShopId) || requestedShopId !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only mark notifications as read for your own shop',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      const updatedCount = await NotificationModel.markAllAsRead(requestedShopId, userId);
 
       return res.status(200).json({
         success: true,
@@ -237,6 +327,24 @@ class NotificationController {
   static async deleteNotification(req, res) {
     try {
       const { id } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const notification = await NotificationModel.getNotificationById(id);
+
+      if (!notification) {
+        return res.status(404).json({
+          success: false,
+          message: 'Notification not found',
+          error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(notification.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to delete this notification',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
 
       const deleted = await NotificationModel.deleteNotification(id);
 
@@ -270,10 +378,27 @@ class NotificationController {
    */
   static async getUnreadCount(req, res) {
     try {
-      const { shop_id } = req.query;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const requestedShopId = req.query.shop_id !== undefined ? Number(req.query.shop_id) : authenticatedShopId;
       const userId = req.user.id;
 
-      if (!shop_id) {
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (req.query.shop_id !== undefined && (Number.isNaN(requestedShopId) || requestedShopId !== authenticatedShopId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only access unread counts for your own shop',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (!requestedShopId || Number.isNaN(requestedShopId)) {
         return res.status(400).json({
           success: false,
           message: 'shop_id is required',
@@ -281,7 +406,7 @@ class NotificationController {
         });
       }
 
-      const count = await NotificationModel.getUnreadCount(shop_id, userId);
+      const count = await NotificationModel.getUnreadCount(requestedShopId, userId);
 
       return res.status(200).json({
         success: true,

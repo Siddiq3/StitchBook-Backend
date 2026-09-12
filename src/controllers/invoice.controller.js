@@ -8,6 +8,15 @@ const AuthorizationService = require('../services/authorization.service');
 const { parsePagination } = require('../utils/pagination');
 const logger = require('../utils/logger');
 
+const getAuthenticatedShopId = (req) => {
+  const rawShopId = req.user?.shop_id ?? req.user?.shopId;
+  if (rawShopId === undefined || rawShopId === null || rawShopId === '') {
+    return null;
+  }
+  const numericShopId = Number(rawShopId);
+  return Number.isNaN(numericShopId) ? null : numericShopId;
+};
+
 const getWebAppUrl = () =>
   (process.env.WEB_APP_URL || process.env.FRONTEND_URL || 'https://stitch-book-web.vercel.app').replace(/\/$/, '');
 
@@ -97,11 +106,20 @@ class InvoiceController {
    */
   static async createInvoice(req, res) {
     try {
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const { 
         shop_id, order_id, customer_id, staff_id, invoice_date, due_date,
         status, subtotal, tax_amount, discount_amount, total_amount,
         amount_paid, amount_due, payment_method, notes, items
       } = req.body;
+
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
 
       // Validation
       if (!shop_id || !total_amount) {
@@ -112,8 +130,17 @@ class InvoiceController {
         });
       }
 
+      const requestedShopId = Number(shop_id);
+      if (Number.isNaN(requestedShopId) || requestedShopId !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only create invoices for your own shop',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
       const invoice = await InvoiceModel.createInvoice({
-        shop_id,
+        shop_id: requestedShopId,
         order_id,
         customer_id,
         staff_id,
@@ -154,6 +181,7 @@ class InvoiceController {
   static async getInvoiceById(req, res) {
     try {
       const { id } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const invoice = await InvoiceModel.getInvoiceById(id);
 
       if (!invoice) {
@@ -161,6 +189,14 @@ class InvoiceController {
           success: false,
           message: 'Invoice not found',
           error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(invoice.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this invoice',
+          error: { code: 'FORBIDDEN', details: {} }
         });
       }
 
@@ -187,6 +223,7 @@ class InvoiceController {
   static async getInvoiceByNumber(req, res) {
     try {
       const { invoiceNumber } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const invoice = await InvoiceModel.getInvoiceByNumber(invoiceNumber);
 
       if (!invoice) {
@@ -194,6 +231,14 @@ class InvoiceController {
           success: false,
           message: 'Invoice not found',
           error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(invoice.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this invoice',
+          error: { code: 'FORBIDDEN', details: {} }
         });
       }
 
@@ -283,12 +328,30 @@ class InvoiceController {
    */
   static async getInvoicesByShop(req, res) {
     try {
-      const { shop_id } = req.query;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const requestedShopId = req.query.shop_id !== undefined ? Number(req.query.shop_id) : authenticatedShopId;
+      const shop_id = requestedShopId;
       const status = req.query.status || null;
       const customer_id = req.query.customer_id ? parseInt(req.query.customer_id, 10) : null;
       const { limit, offset } = parsePagination(req, 50, 100);
 
-      if (!shop_id) {
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (req.query.shop_id !== undefined && (Number.isNaN(shop_id) || shop_id !== authenticatedShopId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only access your own shop invoices',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (!shop_id || Number.isNaN(shop_id)) {
         return res.status(400).json({
           success: false,
           message: 'shop_id is required',
@@ -329,11 +392,29 @@ class InvoiceController {
    */
   static async getInvoiceStats(req, res) {
     try {
-      const { shop_id } = req.query;
+      const authenticatedShopId = getAuthenticatedShopId(req);
+      const requestedShopId = req.query.shop_id !== undefined ? Number(req.query.shop_id) : authenticatedShopId;
+      const shop_id = requestedShopId;
       const start_date = req.query.start_date || null;
       const end_date = req.query.end_date || null;
 
-      if (!shop_id) {
+      if (!authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Authenticated shop context is required',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (req.query.shop_id !== undefined && (Number.isNaN(shop_id) || shop_id !== authenticatedShopId)) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only access your own shop invoice statistics',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
+      if (!shop_id || Number.isNaN(shop_id)) {
         return res.status(400).json({
           success: false,
           message: 'shop_id is required',
@@ -366,6 +447,7 @@ class InvoiceController {
   static async updateInvoice(req, res) {
     try {
       const { id } = req.params;
+      const authenticatedShopId = getAuthenticatedShopId(req);
       const { 
         invoice_date, due_date, status, subtotal, tax_amount, discount_amount,
         total_amount, amount_paid, amount_due, payment_method, notes, items
@@ -377,6 +459,14 @@ class InvoiceController {
           success: false,
           message: 'Invoice not found',
           error: { code: 'NOT_FOUND', details: {} }
+        });
+      }
+
+      if (!authenticatedShopId || Number(existingInvoice.shop_id) !== authenticatedShopId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to update this invoice',
+          error: { code: 'FORBIDDEN', details: {} }
         });
       }
 

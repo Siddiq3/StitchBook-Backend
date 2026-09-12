@@ -5,20 +5,20 @@
 
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
-require('dotenv').config();
+const { DATABASE_URL, NODE_ENV } = require('./env');
 
-// Create connection pool using DATABASE_URL (Supabase format)
+const sslConfig = NODE_ENV === 'production'
+  ? { rejectUnauthorized: true }
+  : process.env.PGSSLMODE === 'require'
+    ? { rejectUnauthorized: true }
+    : false;
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: DATABASE_URL,
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
-  // For development: Disable SSL verification to allow self-signed certificates
-  // For production: Use strict SSL verification
-  ssl: {
-    rejectUnauthorized: false,
-    sslmode: 'allow'
-  }
+  ssl: sslConfig,
 });
 
 // Test connection
