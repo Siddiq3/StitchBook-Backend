@@ -200,7 +200,7 @@ class StaffController {
       if (!features.hasStaffManagement || maxStaff === 0) {
         return res.status(402).json({
           success: false,
-          message: 'Staff login access is available from the Team plan. Upgrade to Team for 2 staff users or Pro for 5 staff users.',
+          message: 'Staff login access is not included in your current plan.',
           error: {
             code: 'STAFF_PLAN_REQUIRED',
             details: {
@@ -217,7 +217,7 @@ class StaffController {
         if (activeStaffCount >= maxStaff) {
           return res.status(402).json({
             success: false,
-            message: `Your current plan allows ${maxStaff} staff user${maxStaff === 1 ? '' : 's'}. Upgrade to Pro for 5 staff users.`,
+            message: `Your current plan allows ${maxStaff} staff user${maxStaff === 1 ? '' : 's'}.`,
             error: {
               code: 'STAFF_LIMIT_REACHED',
               details: {

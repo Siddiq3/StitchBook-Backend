@@ -30,9 +30,11 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user.user_id;
-    const updateData = req.body;
+    // Only self-editable fields. Subscription, identity and shop columns must
+    // never be writable from the request body.
+    const { name } = req.body || {};
 
-    const user = await UserService.updateUserProfile(userId, updateData);
+    const user = await UserService.updateUserProfile(userId, name !== undefined ? { name } : {});
     responder.success(res, 200, 'Profile updated', user);
   } catch (error) {
     logger.error('Update profile error:', error.message);

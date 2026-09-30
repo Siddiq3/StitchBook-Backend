@@ -15,7 +15,7 @@ const subscriptionGate = async (req, res, next) => {
         req.user?.actorType === 'staff' &&
         (!subscription.features?.hasStaffManagement || Number(subscription.features?.maxStaff || 0) === 0)
       ) {
-        return responder.error(res, 402, 'Staff app access is available from the Team plan. Ask the shop owner to upgrade.', {
+        return responder.error(res, 402, 'Staff app access is not included in this shop\'s current plan. Please contact the shop owner.', {
           code: 'STAFF_PLAN_REQUIRED',
           planType: subscription.planType,
           recommendedPlan: 'team',
@@ -26,7 +26,7 @@ const subscriptionGate = async (req, res, next) => {
       return next();
     }
 
-    return responder.error(res, 402, 'Free trial completed. Please take a subscription to continue.', {
+    return responder.error(res, 402, 'Your StitchBook plan is not active.', {
       code: 'SUBSCRIPTION_REQUIRED',
       status: subscription?.status || 'trial_expired',
       requiresSubscription: true,

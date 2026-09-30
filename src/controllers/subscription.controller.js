@@ -28,6 +28,15 @@ const ensureAppBillingRequest = (req, res) => {
 };
 
 /**
+ * Retired endpoints. Plans are purchased through the website upgrade-session
+ * flow and entitlement lives on the users table, so client-driven subscription
+ * writes are refused.
+ */
+exports.retiredEndpoint = (req, res) => {
+  responder.error(res, 410, 'This subscription endpoint is no longer available. Plans are managed through the StitchBook website.');
+};
+
+/**
  * POST /subscription/create
  * Create a new subscription after Razorpay payment
  */
@@ -110,7 +119,6 @@ exports.verifyUpgradeCheckout = async (req, res) => {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-      plan,
     } = req.body || {};
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -122,7 +130,6 @@ exports.verifyUpgradeCheckout = async (req, res) => {
       razorpayOrderId: razorpay_order_id,
       razorpayPaymentId: razorpay_payment_id,
       razorpaySignature: razorpay_signature,
-      plan,
     });
 
     responder.success(res, 200, 'Subscription activated', activation);

@@ -16,6 +16,8 @@ const SUBSCRIPTION_CHECKOUT_TTL_SECONDS = 15 * 60;
 const UPGRADE_SESSION_TTL_SECONDS = Math.max(300, Number(process.env.UPGRADE_SESSION_TTL_SECONDS || 7200));
 const checkoutKey = (token) => `${keyPrefix}subscription_checkout:${token}`;
 const upgradeSessionKey = (sessionId) => `${keyPrefix}subscription_upgrade:${sessionId}`;
+const paymentProcessedKey = (paymentId) => `${keyPrefix}subscription_payment_processed:${paymentId}`;
+const PAYMENT_PROCESSED_TTL_SECONDS = 400 * 24 * 60 * 60;
 
 const PLAN_CONFIG = {
   basic: {
@@ -347,7 +349,6 @@ class SubscriptionService {
     razorpayOrderId,
     razorpayPaymentId,
     razorpaySignature,
-    plan,
   }) {
     const session = await this.validateUpgradeSession(sessionId);
 
@@ -359,9 +360,12 @@ class SubscriptionService {
       throw new Error('Payment verification failed');
     }
 
-    const activation = await this.activateUpgradeFromPayment({
-      sessionId,
-      plan: plan || session.plan,
+    // The plan always comes from the server-side session the order was priced
+    // from, never from the browser.
+    const activation = await this.activatePaidPlan({
+      userId: session.userId,
+      plan: session.plan,
+      razorpayPaymentId,
     });
 
     await redis.del(upgradeSessionKey(sessionId));
@@ -372,27 +376,120 @@ class SubscriptionService {
     };
   }
 
-  static async activateUpgradeFromPayment({ sessionId, plan }) {
-    const session = await this.validateUpgradeSession(sessionId);
-    const normalizedPlan = plan || session.plan;
+  /**
+   * Activate a paid plan on the users table (the entitlement source of truth).
+   * Each Razorpay payment activates at most once, whether it arrives through
+   * the checkout verify call, a webhook retry, or a replay.
+   */
+  static async activatePaidPlan({ userId, plan, razorpayPaymentId }) {
+    if (!userId) {
+      throw new Error('User is required to activate a subscription');
+    }
+
+    if (!razorpayPaymentId) {
+      throw new Error('Payment reference is required to activate a subscription');
+    }
+
+    const planConfig = this.getPlanConfig(plan);
+
+    if (!isRedisReady()) {
+      throw new Error('Subscription activation is temporarily unavailable');
+    }
+
+    const processedKey = paymentProcessedKey(razorpayPaymentId);
+    const claimed = await redis.set(processedKey, String(userId), 'EX', PAYMENT_PROCESSED_TTL_SECONDS, 'NX');
+
+    if (!claimed) {
+      logger.info(`Razorpay payment already applied: ${razorpayPaymentId}`);
+      const user = await UserModel.getUserById(userId);
+      return {
+        userId,
+        plan: user?.plan || plan,
+        subscriptionStatus: user?.subscription_status || null,
+        subscriptionEndsAt: user?.subscription_ends_at ? new Date(user.subscription_ends_at).toISOString() : null,
+        alreadyProcessed: true,
+      };
+    }
+
     const now = new Date();
-    const planConfig = this.getPlanConfig(normalizedPlan);
-    const durationDays = planConfig.durationDays;
-    const subscriptionEndsAt = new Date(now.getTime() + durationDays * MS_PER_DAY);
+    const subscriptionEndsAt = new Date(now.getTime() + planConfig.durationDays * MS_PER_DAY);
 
-    const updatedUser = await UserModel.updateUserSubscription(session.userId, {
-      plan: normalizedPlan,
-      subscription_status: 'active',
-      subscription_start_at: now,
-      subscription_ends_at: subscriptionEndsAt,
-    });
+    let updatedUser;
+    try {
+      updatedUser = await UserModel.updateUserSubscription(userId, {
+        plan,
+        subscription_status: 'active',
+        subscription_start_at: now,
+        subscription_ends_at: subscriptionEndsAt,
+      });
+    } catch (error) {
+      await redis.del(processedKey).catch(() => {});
+      throw error;
+    }
 
+    if (!updatedUser) {
+      await redis.del(processedKey).catch(() => {});
+      throw new Error('User not found for subscription activation');
+    }
+
+    logger.info(`Subscription activated for user ${userId} by payment ${razorpayPaymentId}`);
     return {
-      userId: session.userId,
-      plan: normalizedPlan,
+      userId,
+      plan,
       subscriptionStatus: 'active',
       subscriptionEndsAt: subscriptionEndsAt.toISOString(),
-      user: updatedUser,
+    };
+  }
+
+  /**
+   * Activate from a signature-verified Razorpay webhook payment entity.
+   * Payment notes are supplied by the browser checkout, so user and plan are
+   * read only from the order the server created, and amounts must match.
+   */
+  static async activateFromWebhookPayment(paymentEntity = {}) {
+    const razorpayPaymentId = paymentEntity.id;
+    const razorpayOrderId = paymentEntity.order_id;
+
+    if (!razorpayPaymentId || !razorpayOrderId) {
+      return { ignored: true, reason: 'Payment has no order reference' };
+    }
+
+    const razorpay = this.getRazorpayClient();
+    let order;
+    try {
+      order = await razorpay.orders.fetch(razorpayOrderId);
+    } catch (error) {
+      throw this.normalizeRazorpayError(error);
+    }
+
+    const notes = order?.notes || {};
+    const userId = notes.stitch_user_id;
+    const plan = notes.stitch_plan;
+
+    if (!notes.stitch_upgrade_session_id || !userId || !plan) {
+      return { ignored: true, reason: 'Not a subscription upgrade order' };
+    }
+
+    const planConfig = PLAN_CONFIG[plan];
+    const expectedAmount = planConfig ? Math.round(Number(planConfig.amount) * 100) : NaN;
+    if (
+      !planConfig ||
+      Number(order.amount) !== expectedAmount ||
+      Number(paymentEntity.amount) !== expectedAmount ||
+      order.currency !== 'INR' ||
+      paymentEntity.currency !== 'INR'
+    ) {
+      logger.error(`Razorpay webhook amount/plan mismatch for order ${razorpayOrderId}, payment ${razorpayPaymentId}`);
+      return { ignored: true, reason: 'Payment does not match the subscription plan' };
+    }
+
+    const activation = await this.activatePaidPlan({ userId, plan, razorpayPaymentId });
+    await redis.del(upgradeSessionKey(notes.stitch_upgrade_session_id)).catch(() => {});
+
+    return {
+      ...activation,
+      razorpayPaymentId,
+      razorpayOrderId,
     };
   }
 
