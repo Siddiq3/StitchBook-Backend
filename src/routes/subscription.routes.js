@@ -22,11 +22,12 @@ router.post('/create', requirePermission('shop:write'), subscriptionController.c
 router.post('/create-upgrade-session', requirePermission('shop:read'), subscriptionController.createUpgradeSession);
 router.get('/status', requirePermission('shop:read'), subscriptionController.getSubscriptionStatus);
 router.post('/check-active', requirePermission('shop:read'), subscriptionController.checkActive);
-router.put('/:subscriptionId/status', requirePermission('shop:write'), subscriptionController.updateSubscriptionStatus);
-router.delete('/:subscriptionId', requirePermission('shop:write'), subscriptionController.cancelSubscription);
 
-// Razorpay payment routes
-router.post('/razorpay/create-order', requirePermission('shop:write'), subscriptionController.createRazorpayOrder);
-router.post('/razorpay/verify-payment', requirePermission('shop:write'), subscriptionController.verifyRazorpayPayment);
+// Retired: these wrote to the legacy subscriptions table by id without an
+// ownership check, and the old in-app Razorpay checkout never granted access.
+router.put('/:subscriptionId/status', subscriptionController.retiredEndpoint);
+router.delete('/:subscriptionId', subscriptionController.retiredEndpoint);
+router.post('/razorpay/create-order', subscriptionController.retiredEndpoint);
+router.post('/razorpay/verify-payment', subscriptionController.retiredEndpoint);
 
 module.exports = router;
