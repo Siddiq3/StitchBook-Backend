@@ -425,7 +425,7 @@ class AuthService {
       const userInfo = await FirebaseService.verifyTokenAndGetUserInfo(idToken);
       const { phone, firebaseUid, name } = userInfo;
 
-      logger.info(`✓ Firebase token verified. Phone: ${phone}`);
+      logger.info('✓ Firebase token verified');
 
       // Step 2: Normalize phone (should already be done, but double-check)
       const normalizedPhone = phoneUtils.normalizePhone(phone);
@@ -436,7 +436,7 @@ class AuthService {
 
       // Step 4: Create new user if doesn't exist
       if (!user) {
-        logger.info(`📱 New user detected. Creating user with phone: ${normalizedPhone}`);
+        logger.info('📱 New mobile user detected');
 
         user = await UserModel.createUser({
           phone: normalizedPhone,

@@ -41,24 +41,3 @@ exports.updateProfile = async (req, res) => {
     responder.error(res, 500, 'Failed to update profile', error.message);
   }
 };
-
-/**
- * GET /user/by-phone/:phone
- * Get user by phone number (admin use)
- */
-exports.getUserByPhone = async (req, res) => {
-  try {
-    const { phone } = req.params;
-
-    const user = await UserService.getUserByPhone(phone);
-    
-    if (!user) {
-      return responder.error(res, 404, 'User not found');
-    }
-
-    responder.success(res, 200, 'User retrieved', user);
-  } catch (error) {
-    logger.error('Get user by phone error:', error.message);
-    responder.error(res, 500, 'Failed to get user', error.message);
-  }
-};

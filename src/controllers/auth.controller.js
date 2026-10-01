@@ -199,7 +199,7 @@ exports.login = async (req, res) => {
       ...getAuthMeta(req),
     });
 
-    logger.info(`✓ User login successful. Phone: ${result.user.phone}`);
+    logger.info(`✓ User login successful. User: ${result.user.id}`);
 
     responder.success(res, 200, 'Login successful', result);
   } catch (error) {

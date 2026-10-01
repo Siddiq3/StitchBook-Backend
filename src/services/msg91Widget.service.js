@@ -66,7 +66,7 @@ class Msg91WidgetService {
     const { widgetId, tokenAuth } = getWidgetConfig();
     const msg91Identifier = normalizeMsg91Identifier(identifier);
 
-    logger.info(`Sending MSG91 mobile OTP to ${msg91Identifier}`);
+    logger.info('Sending MSG91 mobile OTP');
 
     const { data } = await axios.post(
       `${MSG91_WIDGET_BASE_URL}/sendOtpMobile`,
@@ -84,7 +84,7 @@ class Msg91WidgetService {
       }
     );
 
-    logger.info('MSG91 mobile send OTP response:', data);
+    logger.info('MSG91 mobile OTP request accepted');
 
     if (!data || data.type !== 'success' || !data.message) {
       throw new Error(data?.message || 'Unable to send OTP');
@@ -110,7 +110,7 @@ class Msg91WidgetService {
       throw new Error('OTP session expired. Please request a new OTP.');
     }
 
-    logger.info(`Verifying MSG91 mobile OTP for request ${reqId}`);
+    logger.info('Verifying MSG91 mobile OTP');
 
     const { data } = await axios.post(
       `${MSG91_WIDGET_BASE_URL}/verifyOtp`,
@@ -129,7 +129,7 @@ class Msg91WidgetService {
       }
     );
 
-    logger.info('MSG91 mobile verify OTP response:', data);
+    logger.info('MSG91 mobile OTP verification completed');
 
     if (!data || data.type !== 'success') {
       throw new Error(data?.message || 'OTP verification failed');

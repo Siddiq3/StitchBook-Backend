@@ -13,6 +13,5 @@ router.use(authMiddleware);
 
 router.get('/profile', userController.getProfile);
 router.put('/profile', userController.updateProfile);
-router.get('/by-phone/:phone', userController.getUserByPhone);
 
 module.exports = router;

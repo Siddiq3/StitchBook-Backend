@@ -71,7 +71,7 @@ const normalizePhone = (phone) => {
       throw new Error(`Invalid phone number format: ${phone}`);
     }
 
-    logger.info(`✓ Phone normalized: ${phone} → ${cleanPhone}`);
+    logger.info('✓ Phone number normalized');
     return cleanPhone;
   } catch (error) {
     logger.error('Phone normalization error:', error.message);
