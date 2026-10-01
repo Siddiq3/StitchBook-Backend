@@ -28,7 +28,8 @@ const upload = multer({
     },
     filename: (req, file, cb) => {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, uniqueSuffix + path.extname(file.originalname));
+      const extension={'image/jpeg':'.jpg','image/png':'.png','image/gif':'.gif','image/webp':'.webp'}[file.mimetype];
+      cb(null, uniqueSuffix + extension);
     }
   }),
   fileFilter: (req, file, cb) => {
@@ -45,6 +46,14 @@ const upload = multer({
   }
 });
 
+router.get('/access',authMiddleware,require('../middleware/permissions').requirePermission('shop:read'),(req,res)=>{
+  const match=String(req.query.path||'').match(/^\/uploads\/([1-9]\d*)\/([A-Za-z0-9_-]+\.(?:jpg|jpeg|png|gif|webp))$/);
+  if(!match||String(req.user.shop_id)!==match[1]) return res.sendStatus(404);
+  const token=require('../utils/privateFiles').signFile(match[1],match[2]);
+  const base=process.env.BASE_URL||(process.env.NODE_ENV!=='production'?'http://localhost:5002':null);
+  if(!base) return res.sendStatus(503);
+  res.json({success:true,data:{url:`${base.replace(/\/$/,'')}${req.query.path}?expires=${token.expires}&signature=${token.signature}`,expiresIn:300}});
+});
 // POST /upload - Upload an image file (authenticated)
 router.post('/', authMiddleware, subscriptionGate, uploadLimiter, upload.single('image'), uploadController.uploadImage);
 

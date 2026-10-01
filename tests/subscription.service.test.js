@@ -1,3 +1,6 @@
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET ||= 'test-access-secret-not-for-production';
+process.env.JWT_REFRESH_SECRET ||= 'test-refresh-secret-not-for-production';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const SubscriptionService = require('../src/services/subscription.service');
@@ -57,6 +60,13 @@ const setupPaymentStubs = () => {
     return { id: userId, ...data };
   };
   UserModel.getUserById = async (userId) => ({ id: userId, plan: 'basic', subscription_status: 'active' });
+  require('../src/models/billingLedger').applyPayment = async ({userId,plan,paymentId,durationDays}) => {
+    if(store.has(paymentId)) return {userId,plan,subscriptionStatus:'active',alreadyProcessed:true};
+    const subscriptionEndsAt = new Date(Date.now()+durationDays*86400000).toISOString();
+    const result = await UserModel.updateUserSubscription(userId,{plan,subscription_status:'active',subscription_ends_at:subscriptionEndsAt});
+    store.set(paymentId,result);
+    return {userId,plan,subscriptionStatus:'active',subscriptionEndsAt};
+  };
   return { store, updates };
 };
 
@@ -66,6 +76,7 @@ test('checkout verification activates the session plan, not a browser-supplied p
     sessionId: 's1', userId: 'u1', plan: 'basic', razorpayOrderId: 'order_1',
   }));
   t.mock.method(SubscriptionService, 'verifyRazorpaySignature', () => true);
+  t.mock.method(SubscriptionService, 'getRazorpayClient', () => ({payments:{fetch:async()=>({status:'captured',order_id:'order_1',amount:29900,currency:'INR'})}}));
 
   const result = await SubscriptionService.verifyUpgradeCheckoutPayment({
     sessionId: 's1',
@@ -88,6 +99,7 @@ test('checkout verification rejects an order id that does not belong to the sess
     sessionId: 's1', userId: 'u1', plan: 'basic', razorpayOrderId: 'order_1',
   }));
   t.mock.method(SubscriptionService, 'verifyRazorpaySignature', () => true);
+  t.mock.method(SubscriptionService, 'getRazorpayClient', () => ({payments:{fetch:async()=>({status:'captured',order_id:'order_1',amount:29900,currency:'INR'})}}));
 
   await assert.rejects(
     SubscriptionService.verifyUpgradeCheckoutPayment({
@@ -187,6 +199,9 @@ test('PUT /user/profile only forwards the name field', async (t) => {
 test('webhook handler checks the signature and only activates on captured payments', async (t) => {
   const crypto = require('crypto');
   const webhookController = require('../src/controllers/webhook.controller');
+  const ledger = require('../src/models/billingLedger');
+  t.mock.method(ledger, 'claimWebhook', async () => ({state:'claimed',attempt:1}));
+  t.mock.method(ledger, 'finishWebhook', async () => {});
   process.env.RAZORPAY_WEBHOOK_SECRET = 'whsec_test';
   const activate = t.mock.method(SubscriptionService, 'activateFromWebhookPayment', async () => ({
     userId: 'u1', plan: 'basic', subscriptionStatus: 'active',

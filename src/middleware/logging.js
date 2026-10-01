@@ -6,6 +6,7 @@
 const morgan = require('morgan');
 const logger = require('../utils/logger');
 
+morgan.token('safe-path', (req) => req.path.replace(/(upgrade-session|checkout-session)\/[^/]+/g, '$1/[Redacted]'));
 morgan.token('id', (req) => req.requestId || 'unknown');
 morgan.token('user', (req) => (req.user ? req.user.userId : 'anonymous'));
 
@@ -16,6 +17,6 @@ const stream = {
 const skip = () => process.env.NODE_ENV === 'test';
 
 module.exports = morgan(
-  ':id :remote-addr :method :url :status :res[content-length] - :response-time ms user=:user',
+  ':id :remote-addr :method :safe-path :status :res[content-length] - :response-time ms user=:user',
   { stream, skip }
 );

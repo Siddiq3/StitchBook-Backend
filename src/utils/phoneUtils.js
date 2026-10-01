@@ -74,7 +74,7 @@ const normalizePhone = (phone) => {
     logger.info('✓ Phone number normalized');
     return cleanPhone;
   } catch (error) {
-    logger.error('Phone normalization error:', error.message);
+    logger.warn('Invalid phone number');
     throw error;
   }
 };

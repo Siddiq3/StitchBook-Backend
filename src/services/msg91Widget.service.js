@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const phoneUtils = require('../utils/phoneUtils');
 const logger = require('../utils/logger');
 const { client: redis, isReady: isRedisReady, keyPrefix: redisPrefix } = require('../config/redis');
@@ -28,19 +29,28 @@ const sessionKey = (reqId) => `${redisPrefix}msg91:otp:${reqId}`;
 
 const saveOtpSession = async (reqId, identifier) => {
   if (isRedisReady()) {
-    await redis.set(sessionKey(reqId), identifier, 'EX', OTP_SESSION_TTL_SECONDS);
+    await redis.set(sessionKey(reqId), JSON.stringify({identifier,attempts:0}), 'EX', OTP_SESSION_TTL_SECONDS);
     return;
   }
 
   memoryOtpSessions.set(reqId, {
     identifier,
+    attempts: 0,
     expiresAt: Date.now() + OTP_SESSION_TTL_SECONDS * 1000,
   });
 };
 
 const getOtpSession = async (reqId) => {
   if (isRedisReady()) {
-    return redis.get(sessionKey(reqId));
+    return redis.eval(`
+      local raw=redis.call('GET',KEYS[1]); if not raw then return nil end
+      local value=cjson.decode(raw)
+      if value.attempts>=5 then redis.call('DEL',KEYS[1]); return nil end
+      value.attempts=value.attempts+1
+      local ttl=redis.call('TTL',KEYS[1]); if ttl<1 then return nil end
+      redis.call('SET',KEYS[1],cjson.encode(value),'EX',ttl)
+      return value.identifier
+    `,1,sessionKey(reqId));
   }
 
   const item = memoryOtpSessions.get(reqId);
@@ -49,6 +59,8 @@ const getOtpSession = async (reqId) => {
     memoryOtpSessions.delete(reqId);
     return null;
   }
+  item.attempts++;
+  if(item.attempts>5){memoryOtpSessions.delete(reqId);return null;}
   return item.identifier;
 };
 
@@ -65,6 +77,9 @@ class Msg91WidgetService {
   static async sendMobileOtp(identifier) {
     const { widgetId, tokenAuth } = getWidgetConfig();
     const msg91Identifier = normalizeMsg91Identifier(identifier);
+    if(process.env.NODE_ENV==='production'&&!isRedisReady()) throw new Error('Authentication temporarily unavailable');
+    const cooldownKey=`${redisPrefix}msg91:cooldown:${crypto.createHash('sha256').update(msg91Identifier).digest('hex')}`;
+    if(isRedisReady()&&!await redis.set(cooldownKey,'1','EX',60,'NX')) throw new Error('Please wait before requesting another code');
 
     logger.info('Sending MSG91 mobile OTP');
 
@@ -107,7 +122,7 @@ class Msg91WidgetService {
 
     const identifier = await getOtpSession(reqId);
     if (!identifier) {
-      throw new Error('OTP session expired. Please request a new OTP.');
+      throw new Error('Invalid or expired verification code');
     }
 
     logger.info('Verifying MSG91 mobile OTP');
@@ -171,7 +186,7 @@ class Msg91WidgetService {
       }
     );
 
-    logger.info('MSG91 widget verification response:', data);
+    logger.info('MSG91 widget verification completed');
 
     if (!data || data.type !== 'success' || !data.message) {
       throw new Error(data?.message || 'MSG91 widget verification failed');

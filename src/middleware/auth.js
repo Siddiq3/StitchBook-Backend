@@ -76,6 +76,12 @@ const authMiddleware = async (req, res, next) => {
       return responder.error(res, 401, 'User not found');
     }
 
+    if (user.deletion_started_at && !req.originalUrl.startsWith('/api/auth/') && !req.originalUrl.startsWith('/api/user/delete-account')) {
+      return responder.error(res,403,'Account deletion is in progress', {code:'ACCOUNT_DELETING'});
+    }
+    const ownerDeleting = await require('../config/database').queryRow(`SELECT u.id FROM users u JOIN shops s ON s.user_id=u.id JOIN staff st ON st.shop_id=s.id WHERE st.user_id=$1 AND u.deletion_started_at IS NOT NULL LIMIT 1`,[decoded.userId]);
+    if (ownerDeleting && !req.originalUrl.startsWith('/api/auth/') && !req.originalUrl.startsWith('/api/user/delete-account')) return responder.error(res,403,'This shop is unavailable');
+
     const [ownedShop, staffAccount] = await Promise.all([
       ShopModel.getShopByUserId(decoded.userId),
       StaffModel.getStaffByUserId(decoded.userId),

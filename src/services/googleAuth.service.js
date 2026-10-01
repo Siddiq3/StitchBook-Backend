@@ -25,17 +25,18 @@ class GoogleAuthService {
     }
 
     const allowedClientIds = getAllowedClientIds();
-    if (allowedClientIds.length > 0 && !allowedClientIds.includes(data.aud)) {
+    if (allowedClientIds.length === 0 || !allowedClientIds.includes(data.aud)) {
       logger.warn(`Google token audience mismatch: ${data.aud}`);
       throw new Error('Google token was not issued for this app');
     }
 
-    if (data.email_verified && data.email_verified !== 'true' && data.email_verified !== true) {
+    if (data.email_verified !== 'true' && data.email_verified !== true) {
       throw new Error('Google email is not verified');
     }
 
     return {
       googleId: data.sub,
+      issuedAt: Number(data.iat),
       email: data.email.toLowerCase(),
       name: data.name || data.given_name || data.email.split('@')[0],
       avatar: data.picture || null,

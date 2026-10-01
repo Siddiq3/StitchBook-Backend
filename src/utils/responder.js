@@ -26,6 +26,12 @@ const success = (res, statusCode = 200, message = 'Success', data = null) => {
  * @param {*} error - Error details (optional)
  */
 const error = (res, statusCode = 500, message = 'Error', errorDetails = null) => {
+  if (process.env.NODE_ENV === "production") {
+    if (/invalid input syntax|syntax error|relation .*does not exist|column .*does not exist|ECONN|password authentication|violates .*constraint/i.test(message)) message = "Unable to complete the request";
+    if (statusCode >= 500) message = statusCode === 503 ? "Service temporarily unavailable. Please try again." : "Unable to complete the request. Please try again.";
+    if (typeof errorDetails !== "object" || errorDetails instanceof Error) errorDetails = null;
+    else if (errorDetails) errorDetails = Object.fromEntries(Object.entries(errorDetails).filter(([key]) => ["code", "status", "requiresSubscription", "trialEndDate", "billingPath", "planType", "recommendedPlan"].includes(key)));
+  }
   const response = {
     success: false,
     message,

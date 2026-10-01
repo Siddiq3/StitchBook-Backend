@@ -66,56 +66,18 @@ app.use((req, res, next) => {
   }
 });
 
-// Rate limiting middleware
+// Cheap liveness, and bounded/cache-coalesced dependency readiness.
+app.get(['/health','/live'],(req,res)=>res.json({success:true,status:'OK'}));
+const ready = require('./services/readiness').createReadinessProbe({
+  checkDatabase:()=>require('./config/database').pool.query({text:'SELECT 1',query_timeout:2000}),
+  checkRedis:()=>getRedisStatus()==='ready',
+});
+app.get('/ready', require('express-rate-limit')({windowMs:60000,max:30,standardHeaders:true,legacyHeaders:false}), async(req,res)=>{
+  const result=await ready(); res.status(result.status==='READY'?200:503).json(result);
+});
 app.use(globalLimiter);
-
-// Health check route
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    message: 'StitchBook backend is running',
-    health: '/health',
-    api: '/api',
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get('/api', (req, res) => {
-  res.json({
-    success: true,
-    message: 'StitchBook API is running',
-    routes: [
-      '/api/auth',
-      '/api/shop',
-      '/api/customer',
-      '/api/order',
-      '/api/subscription',
-      '/api/dashboard',
-    ],
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    status: 'OK',
-    message: 'Server is running',
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// Readiness probe
-app.get('/ready', (req, res) => {
-  const redisStatus = getRedisStatus();
-  const isReady = redisStatus === 'ready';
-
-  res.status(isReady ? 200 : 503).json({
-    status: isReady ? 'READY' : 'NOT_READY',
-    redis: redisStatus,
-    timestamp: new Date().toISOString(),
-  });
-});
+app.get('/',(req,res)=>res.json({success:true,message:'StitchBook backend is running',health:'/health',api:'/api'}));
+app.get('/api',(req,res)=>res.json({success:true,message:'StitchBook API is running'}));
 
 // Swagger UI - API Documentation
 if (process.env.NODE_ENV !== 'production') {
@@ -134,7 +96,12 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Static file serving for uploads
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.get('/uploads/:shopId/:filename',(req,res)=>{
+  const {shopId,filename}=req.params;
+  if(!require('./utils/privateFiles').verifyFile(shopId,filename,req.query.expires,req.query.signature)) return res.sendStatus(404);
+  res.set('Cache-Control','private, max-age=60');
+  res.sendFile(path.join(__dirname,'../uploads',shopId,filename));
+});
 
 // API Routes
 app.use('/api/auth', authRoutes);

@@ -8,6 +8,8 @@ const UserModel = require('../models/user.model');
 const logger = require('../utils/logger');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
+const ledger = require('../models/billingLedger');
+const { createRecoverableOrder } = require('./recoverableCheckout');
 const { client: redis, isReady: isRedisReady, keyPrefix } = require('../config/redis');
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -260,6 +262,7 @@ class SubscriptionService {
       throw new Error('WEB_APP_URL is required to create upgrade sessions');
     }
 
+    if (process.env.NODE_ENV === 'production') require('../config/production').requireHttps(configured, 'WEB_APP_URL');
     return String(configured).replace(/\/$/, '');
   }
 
@@ -278,6 +281,10 @@ class SubscriptionService {
     }
 
     const parsed = JSON.parse(payload);
+    const owner = await UserModel.getUserById(parsed.userId);
+    if (!owner || owner.deletion_started_at) {
+      throw new Error('This account is unavailable for checkout');
+    }
     if (Number(new Date(parsed.expiresAt)) <= Date.now()) {
       await redis.del(upgradeSessionKey(sessionId));
       throw new Error('Upgrade session has expired');
@@ -307,10 +314,10 @@ class SubscriptionService {
 
     let order;
     try {
-      order = await razorpay.orders.create({
+      order = await createRecoverableOrder({
+        id: sessionId, userId: session.userId, plan: session.plan, razorpay,
         amount: amountPaise,
-        currency: 'INR',
-        receipt: `upgrade_${session.userId}_${Date.now()}`.slice(0, 40),
+        receipt: `upgrade_${sessionId}`.slice(0, 40),
         notes: {
           stitch_upgrade_session_id: sessionId,
           stitch_plan: session.plan,
@@ -360,6 +367,10 @@ class SubscriptionService {
       throw new Error('Payment verification failed');
     }
 
+    const payment = await this.getRazorpayClient().payments.fetch(razorpayPaymentId);
+    const expected = Math.round(Number(this.getPlanConfig(session.plan).amount) * 100);
+    if (payment.status !== 'captured' || payment.order_id !== razorpayOrderId || Number(payment.amount) !== expected || payment.currency !== 'INR') throw new Error('Payment is not captured or does not match the order');
+
     // The plan always comes from the server-side session the order was priced
     // from, never from the browser.
     const activation = await this.activatePaidPlan({
@@ -368,7 +379,7 @@ class SubscriptionService {
       razorpayPaymentId,
     });
 
-    await redis.del(upgradeSessionKey(sessionId));
+    // Keep session available until normal TTL so verification retries are idempotent.
     return {
       ...activation,
       razorpayPaymentId,
@@ -392,53 +403,7 @@ class SubscriptionService {
 
     const planConfig = this.getPlanConfig(plan);
 
-    if (!isRedisReady()) {
-      throw new Error('Subscription activation is temporarily unavailable');
-    }
-
-    const processedKey = paymentProcessedKey(razorpayPaymentId);
-    const claimed = await redis.set(processedKey, String(userId), 'EX', PAYMENT_PROCESSED_TTL_SECONDS, 'NX');
-
-    if (!claimed) {
-      logger.info(`Razorpay payment already applied: ${razorpayPaymentId}`);
-      const user = await UserModel.getUserById(userId);
-      return {
-        userId,
-        plan: user?.plan || plan,
-        subscriptionStatus: user?.subscription_status || null,
-        subscriptionEndsAt: user?.subscription_ends_at ? new Date(user.subscription_ends_at).toISOString() : null,
-        alreadyProcessed: true,
-      };
-    }
-
-    const now = new Date();
-    const subscriptionEndsAt = new Date(now.getTime() + planConfig.durationDays * MS_PER_DAY);
-
-    let updatedUser;
-    try {
-      updatedUser = await UserModel.updateUserSubscription(userId, {
-        plan,
-        subscription_status: 'active',
-        subscription_start_at: now,
-        subscription_ends_at: subscriptionEndsAt,
-      });
-    } catch (error) {
-      await redis.del(processedKey).catch(() => {});
-      throw error;
-    }
-
-    if (!updatedUser) {
-      await redis.del(processedKey).catch(() => {});
-      throw new Error('User not found for subscription activation');
-    }
-
-    logger.info(`Subscription activated for user ${userId} by payment ${razorpayPaymentId}`);
-    return {
-      userId,
-      plan,
-      subscriptionStatus: 'active',
-      subscriptionEndsAt: subscriptionEndsAt.toISOString(),
-    };
+    return ledger.applyPayment({ userId, plan, paymentId: razorpayPaymentId, durationDays: planConfig.durationDays });
   }
 
   /**
@@ -484,7 +449,7 @@ class SubscriptionService {
     }
 
     const activation = await this.activatePaidPlan({ userId, plan, razorpayPaymentId });
-    await redis.del(upgradeSessionKey(notes.stitch_upgrade_session_id)).catch(() => {});
+    // The durable ledger handles duplicate delivery; keep the session for retries.
 
     return {
       ...activation,

@@ -16,6 +16,12 @@ exports.uploadImage = async (req, res) => {
       return responder.error(res, 400, 'No file uploaded');
     }
 
+    const fs=require('fs/promises');
+    const bytes=await fs.readFile(req.file.path);
+    if(!require('../utils/privateFiles').isImage(bytes,req.file.mimetype)){
+      await fs.unlink(req.file.path);
+      return responder.error(res,400,'File content must be a supported image');
+    }
     const authenticatedShopId = req.user?.shop_id ?? req.user?.shopId;
     if (authenticatedShopId === undefined || authenticatedShopId === null || authenticatedShopId === '') {
       return responder.error(res, 403, 'Authenticated shop context is required');

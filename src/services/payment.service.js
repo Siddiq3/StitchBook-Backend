@@ -9,6 +9,7 @@ const ActivityLogModel = require('../models/activity.model');
 const logger = require('../utils/logger');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
+const { transaction } = require('../models/billingLedger');
 const { client: redis, isReady: isRedisReady, keyPrefix } = require('../config/redis');
 
 const CHECKOUT_TTL_SECONDS = 15 * 60;
@@ -151,6 +152,9 @@ class PaymentService {
       throw new Error('Payment verification failed');
     }
 
+    const provider = new Razorpay({key_id:process.env.RAZORPAY_KEY_ID,key_secret:process.env.RAZORPAY_KEY_SECRET});
+    const captured = await provider.payments.fetch(razorpayPaymentId);
+    if(captured.status!=='captured'||captured.order_id!==razorpayOrderId||captured.currency!=='INR'||Number(captured.amount)!==Math.round(Number(session.amount)*100)) throw new Error('Payment is not captured or amount does not match');
     const notes = `Razorpay payment ID: ${razorpayPaymentId} | Razorpay order ID: ${razorpayOrderId}`;
     const payment = await this.createPayment(
       session.orderId,
@@ -159,10 +163,11 @@ class PaymentService {
       'razorpay',
       new Date().toISOString().split('T')[0],
       session.userId,
-      notes
+      notes,
+      razorpayPaymentId
     );
 
-    await redis.del(key);
+    // Keep the session until TTL for safe verification retries.
 
     return {
       payment,
@@ -183,48 +188,24 @@ class PaymentService {
    * @param {string} notes - Payment notes
    * @returns {object} - Created payment
    */
-  static async createPayment(orderId, shopId, amount, paymentMethod, paymentDate, userId, notes) {
-    try {
-      // Create payment record
-      const payment = await PaymentModel.createPayment({
-        order_id: orderId,
-        shop_id: shopId,
-        amount,
-        payment_method: paymentMethod,
-        payment_date: paymentDate,
-        recorded_by: userId,
-        notes,
-      });
-
-      // Get total paid so far
-      const totalPaid = await PaymentModel.getTotalPaidForOrder(orderId);
-
-      // Get order to calculate new balance
-      const order = await OrderModel.getOrderById(orderId);
-      const balanceDue = order.total_amount - totalPaid;
-
-      // Update order with new balance
-      await OrderModel.updateOrder(orderId, {
-        advance_paid: totalPaid,
-        balance_due: balanceDue,
-      });
-
-      // Create activity log
-      await ActivityLogModel.createActivityLog({
-        order_id: orderId,
-        shop_id: shopId,
-        user_id: userId,
-        action_type: 'payment',
-        new_value: amount.toString(),
-        notes: `Payment recorded: ₹${amount} via ${paymentMethod}`,
-      });
-
-      logger.info(`Payment created for order: ${orderId}`);
+  static async createPayment(orderId, shopId, amount, paymentMethod, paymentDate, userId, notes, providerPaymentId = null) {
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) throw new Error('Payment amount must be greater than zero');
+    return transaction(async client => {
+      const order = (await client.query('SELECT * FROM orders WHERE id=$1 AND shop_id=$2 FOR UPDATE',[orderId,shopId])).rows[0];
+      if (!order) throw new Error('Order not found');
+      if (providerPaymentId) {
+        const previous = (await client.query('SELECT * FROM payments WHERE provider_payment_id=$1',[providerPaymentId])).rows[0];
+        if (previous) {
+          if (String(previous.order_id)!==String(orderId)) throw new Error('Payment ownership mismatch');
+          return previous;
+        }
+      }
+      const payment = (await client.query(`INSERT INTO payments(order_id,shop_id,amount,payment_method,payment_date,recorded_by,notes,provider_payment_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[orderId,shopId,amount,paymentMethod||'cash',paymentDate||new Date().toISOString().slice(0,10),userId,notes||null,providerPaymentId||null])).rows[0];
+      const totalPaid=Number((await client.query('SELECT COALESCE(SUM(amount),0) AS total_paid FROM payments WHERE order_id=$1',[orderId])).rows[0].total_paid);
+      await client.query('UPDATE orders SET advance_paid=$2,balance_due=total_amount-$2,updated_at=NOW() WHERE id=$1',[orderId,totalPaid]);
+      await client.query(`INSERT INTO activity_log(order_id,shop_id,user_id,action_type,new_value,notes) VALUES($1,$2,$3,'payment',$4,$5)`,[orderId,shopId,userId,String(amount),`Payment recorded: ₹${amount} via ${paymentMethod}`]);
       return payment;
-    } catch (error) {
-      logger.error('Error creating payment:', error.message);
-      throw error;
-    }
+    });
   }
 
   /**

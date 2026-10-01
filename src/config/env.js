@@ -1,3 +1,4 @@
+require('./production').validateProductionConfig();
 /**
  * Central environment validation for required runtime configuration.
  * Secrets are required at startup and must never fall back to hardcoded values.

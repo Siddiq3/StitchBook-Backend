@@ -2,10 +2,14 @@ const crypto = require('crypto');
 const SubscriptionService = require('../services/subscription.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
+const ledger = require('../models/billingLedger');
 
-const getRazorpayWebhookSecret = () => process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET;
+const getRazorpayWebhookSecret = () => process.env.RAZORPAY_WEBHOOK_SECRET;
 
 exports.handleRazorpayWebhook = async (req, res) => {
+  let eventId;
+  let claimed = false;
+  let attempt;
   try {
     const signature = req.get('x-razorpay-signature');
     const rawBody = req.body?.toString ? req.body.toString('utf8') : '';
@@ -36,7 +40,15 @@ exports.handleRazorpayWebhook = async (req, res) => {
       return responder.success(res, 200, 'Webhook received', { received: true });
     }
 
+    eventId = crypto.createHash('sha256').update(rawBody).digest('hex');
+    const claim = await ledger.claimWebhook(eventId);
+    if (claim.state === 'processed') return responder.success(res, 200, 'Webhook already received', {received:true,alreadyProcessed:true});
+    if (claim.state === 'busy') return responder.error(res, 503, 'Webhook processing is in progress');
+    claimed = true;
+    attempt = claim.attempt;
     const activation = await SubscriptionService.activateFromWebhookPayment(paymentEntity);
+    await ledger.finishWebhook(eventId, true, attempt);
+    claimed = false;
     if (activation.ignored) {
       logger.info(`Ignoring Razorpay webhook payment ${paymentEntity.id}: ${activation.reason}`);
       return responder.success(res, 200, 'Webhook received', { received: true });
@@ -48,6 +60,7 @@ exports.handleRazorpayWebhook = async (req, res) => {
       alreadyProcessed: Boolean(activation.alreadyProcessed),
     });
   } catch (error) {
+    if (claimed) await ledger.finishWebhook(eventId, false, attempt).catch(() => {});
     logger.error('Razorpay webhook error:', error.message);
     responder.error(res, 500, 'Razorpay webhook processing failed', error.message);
   }

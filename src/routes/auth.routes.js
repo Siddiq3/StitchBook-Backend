@@ -9,6 +9,7 @@ const authMiddleware = require('../middleware/auth');
 const { loginLimiter, otpLimiter, refreshLimiter } = require('../middleware/rateLimit/limitersRedis');
 
 const router = express.Router();
+router.use(require('../middleware/webSession').webSession);
 
 // ============================================================================
 // PUBLIC ROUTES (No authentication required)

@@ -82,7 +82,7 @@ class UserModel {
   static async getUserById(userId) {
     try {
       const query = `
-        SELECT id, phone, email, name, firebase_uid, google_id, avatar, auth_provider, shop_id,
+        SELECT deletion_started_at, id, phone, email, name, firebase_uid, google_id, avatar, auth_provider, shop_id,
           trial_start_at, trial_ends_at, plan, subscription_status,
           subscription_start_at, subscription_ends_at, last_login, created_at, updated_at
         FROM users

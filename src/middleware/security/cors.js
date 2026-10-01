@@ -80,8 +80,8 @@ const corsOptions = {
     if (
       allowedOriginSet.has(normalizedOrigin) ||
       allowedNativeOrigins.has(normalizedOrigin) ||
-      isAllowedExpoOrigin(normalizedOrigin) ||
-      isAllowedVercelPreview(normalizedOrigin)
+      (process.env.NODE_ENV !== 'production' && isAllowedExpoOrigin(normalizedOrigin)) ||
+      (process.env.NODE_ENV !== 'production' && isAllowedVercelPreview(normalizedOrigin))
     ) {
       return callback(null, true);
     }
@@ -90,7 +90,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-client-platform'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-client-platform', 'x-deletion-token', 'x-idempotency-key'],
 };
 
 module.exports = cors(corsOptions);

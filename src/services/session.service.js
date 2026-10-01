@@ -81,43 +81,23 @@ exports.getSession = async (sessionId) => {
 exports.rotateRefreshToken = async (sessionId, currentRefreshJti, nextRefreshJti) => {
   ensureRedis();
   const key = getSessionKey(sessionId);
-
-  // Use Redis WATCH/MULTI to make refresh token rotation atomic.
-  // This prevents two concurrent refresh requests from both succeeding
-  // on the same refresh token, which would break replay protection.
-  await redis.watch(key);
   const session = await exports.getSession(sessionId);
+  if (!session) throw new Error('Session is not active');
 
-  if (!session || !session.active) {
-    await redis.unwatch();
-    throw new Error('Session is not active');
-  }
-
-  if (session.refreshJti !== currentRefreshJti) {
-    await redis.unwatch();
-    await exports.revokeSession(sessionId);
-    throw new Error('Refresh token reuse detected');
-  }
-
-  const transaction = redis.multi();
-  transaction.hmset(key, {
-    refreshJti: nextRefreshJti,
-    lastRefreshAt: String(Date.now()),
-  });
-  transaction.expire(key, SESSION_TTL_SECONDS);
-  transaction.expire(getUserSessionKey(session.userId), SESSION_TTL_SECONDS);
-
-  const results = await transaction.exec();
-  if (results === null) {
-    await exports.revokeSession(sessionId);
-    throw new Error('Refresh token reuse detected');
-  }
-
-  return {
-    sessionId,
-    userId: session.userId,
-    refreshJti: nextRefreshJti,
-  };
+  // A Lua compare-and-swap is atomic even on a shared Redis connection.
+  const result = await redis.eval(`
+    if redis.call('HGET', KEYS[1], 'active') ~= 'true' then return 0 end
+    if redis.call('HGET', KEYS[1], 'refreshJti') ~= ARGV[1] then
+      redis.call('DEL', KEYS[1]); return -1
+    end
+    redis.call('HSET', KEYS[1], 'refreshJti', ARGV[2], 'lastRefreshAt', ARGV[3])
+    redis.call('EXPIRE', KEYS[1], ARGV[4])
+    redis.call('EXPIRE', KEYS[2], ARGV[4])
+    return 1
+  `, 2, key, getUserSessionKey(session.userId), currentRefreshJti, nextRefreshJti, String(Date.now()), SESSION_TTL_SECONDS);
+  if (Number(result) === -1) throw new Error('Refresh token reuse detected');
+  if (Number(result) !== 1) throw new Error('Session is not active');
+  return { sessionId, refreshJti: nextRefreshJti };
 };
 
 exports.revokeSession = async (sessionId) => {
@@ -132,6 +112,9 @@ exports.revokeSession = async (sessionId) => {
 
 exports.listSessionsForUser = async (userId) => {
   ensureRedis();
+  if (await redis.scard(getUserSessionKey(userId)) > 100) {
+    throw new Error('Too many device sessions to display. Sign out all devices and sign in again.');
+  }
   const sessionIds = await redis.smembers(getUserSessionKey(userId));
   const sessions = [];
 
@@ -147,14 +130,28 @@ exports.listSessionsForUser = async (userId) => {
   return sessions.sort((a, b) => (b.lastRefreshAt || b.createdAt) - (a.lastRefreshAt || a.createdAt));
 };
 
-exports.revokeAllSessionsForUser = async (userId) => {
+exports.revokeSessionBatch = async (userId) => {
   ensureRedis();
-  const sessionIds = await redis.smembers(getUserSessionKey(userId));
-
-  if (sessionIds.length > 0) {
-    await redis.del(...sessionIds.map(getSessionKey));
+  const pointer = getUserSessionKey(userId);
+  const [, scanned] = await redis.sscan(pointer, '0', 'COUNT', 100);
+  const ids = scanned.slice(0,100);
+  if(ids.length) {
+    const commands=redis.multi();
+    commands.del(...ids.map(getSessionKey));
+    commands.srem(pointer,...ids);
+    const results=await commands.exec();
+    if(!results||results.some(([error])=>error)) throw new Error('Session revocation is incomplete. Please retry.');
   }
-
-  await redis.del(getUserSessionKey(userId));
-  return { revoked: sessionIds.length };
+  const remaining = await redis.scard(pointer);
+  if(!remaining) await redis.del(pointer);
+  return {revoked:ids.length,remaining};
+};
+exports.revokeAllSessionsForUser = async (userId) => {
+  let revoked=0;
+  for(let batch=0;batch<20;batch++) {
+    const result=await exports.revokeSessionBatch(userId);
+    revoked+=result.revoked;
+    if(!result.remaining) return {revoked};
+  }
+  throw new Error('Session revocation is still in progress. Please retry.');
 };
