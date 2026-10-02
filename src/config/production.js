@@ -1,6 +1,6 @@
 function validateProductionConfig(env = process.env) {
   if (env.NODE_ENV !== 'production') return;
-  for (const name of ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'DATABASE_URL', 'REDIS_URL', 'GOOGLE_WEB_CLIENT_ID', 'FRONTEND_URLS']) {
+  for (const name of ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'DATABASE_URL', 'REDIS_URL', 'FRONTEND_URLS']) {
     const value = env[name];
     if (!value || /your[-_]|change_this|YOUR_/i.test(value)) throw new Error(`${name} must be configured for production`);
   }
