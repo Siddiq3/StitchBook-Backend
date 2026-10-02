@@ -38,6 +38,11 @@ jobs:
           node --check src/routes/auth.routes.js
           node --check src/models/user.model.js
           node --check tests/password-auth.test.js
+          node --check src/services/passwordReset.service.js
+          node --check src/services/email/resend.provider.js
+          node --check src/services/email/index.js
+          node --check src/services/email/passwordReset.template.js
+          node --check tests/password-reset.test.js
       - run: npm ci
       - run: npm run lint
       - run: npm run test:coverage

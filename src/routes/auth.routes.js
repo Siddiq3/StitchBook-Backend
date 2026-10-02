@@ -16,6 +16,8 @@ router.use(require('../middleware/webSession').webSession);
 // ============================================================================
 router.post('/register', loginLimiter, authController.register);
 router.post('/login', loginLimiter, authController.passwordLogin);
+router.post('/forgot-password', otpLimiter, authController.requestPasswordReset);
+router.post('/reset-password', loginLimiter, authController.resetPassword);
 
 /**
  * POST /api/auth/google
