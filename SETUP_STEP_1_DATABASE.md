@@ -24,7 +24,7 @@ customers (Customer records)
   ├─→ measurements (Flexible measurement data)
   └─→ orders (Tailoring jobs)
 
-subscriptions (Linked to users - for Razorpay payments)
+subscriptions (Linked to users - for Cashfree payments)
 ```
 
 ---
@@ -240,7 +240,7 @@ Should show 9 indexes:
 - idx_orders_shop_id
 - idx_orders_status
 - idx_shops_user_id
-- idx_subscriptions_razorpay_id
+- idx_subscriptions_provider_id
 - idx_subscriptions_user_id
 
 ### ✅ Check 4: ENUM Types Created
@@ -388,7 +388,7 @@ Subscription/payment tracking
 - id: Subscription ID
 - user_id: Links to users
 - plan: Plan name (basic, premium, etc.)
-- razorpay_subscription_id: Razorpay payment ID
+- provider_subscription_id: Cashfree payment ID
 - status: active/inactive/expired
 - expiry_date: Subscription expiry date
 ```

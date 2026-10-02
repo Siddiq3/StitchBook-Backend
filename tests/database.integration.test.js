@@ -26,12 +26,21 @@ test.before(async()=>{
     CREATE TABLE payments(id SERIAL PRIMARY KEY,order_id INTEGER REFERENCES orders(id),shop_id INTEGER REFERENCES shops(id),amount NUMERIC,payment_method TEXT,payment_date DATE,recorded_by INTEGER REFERENCES users(id),notes TEXT);
     CREATE TABLE activity_log(id SERIAL PRIMARY KEY,order_id INTEGER REFERENCES orders(id),shop_id INTEGER REFERENCES shops(id),user_id INTEGER REFERENCES users(id),action_type TEXT,new_value TEXT,notes TEXT);
     CREATE TABLE staff(id SERIAL PRIMARY KEY,shop_id INTEGER REFERENCES shops(id),user_id INTEGER REFERENCES users(id));
-    CREATE TABLE subscriptions(id SERIAL PRIMARY KEY,user_id INTEGER REFERENCES users(id));
+    CREATE TABLE subscriptions(id SERIAL PRIMARY KEY,user_id INTEGER REFERENCES users(id),razorpay_payment_id TEXT,razorpay_order_id TEXT,razorpay_subscription_id TEXT);
     INSERT INTO users(google_id,name) VALUES('identity-1','Owner'),('identity-2','Other owner');
     INSERT INTO shops(user_id) VALUES(1),(2);
     INSERT INTO customers(shop_id) VALUES(1),(2);
     INSERT INTO orders(customer_id,shop_id,total_amount,balance_due) VALUES(1,1,1000,1000),(2,2,1000,1000);`);
   await db.query(fs.readFileSync(require('node:path').join(__dirname,'../src/migrations/012_production_hardening.sql'),'utf8'));
+});
+integration('Cashfree migration preserves historical references and is repeatable', async () => {
+  await db.query("INSERT INTO subscriptions(user_id,razorpay_payment_id,razorpay_order_id) VALUES(2,'historical-payment','historical-order')");
+  const migration=fs.readFileSync(require('node:path').join(__dirname,'../src/migrations/014_cashfree.sql'),'utf8');
+  await db.query(migration);
+  await db.query(migration);
+  const row=await db.queryRow('SELECT provider_payment_id,provider_order_id FROM subscriptions WHERE user_id=2');
+  assert.equal(row.provider_payment_id,'historical-payment');assert.equal(row.provider_order_id,'historical-order');
+  await db.query(`INSERT INTO customer_payment_checkouts(provider_order_id,session) VALUES('customer_test','{"userId":1}'),('customer_other','{"userId":2}')`);
 });
 integration('concurrent identical captured payment activates only once',async()=>{
   const results=await Promise.all(Array.from({length:10},()=>ledger.applyPayment({userId:1,plan:'basic',paymentId:'same-payment',durationDays:30})));
@@ -93,6 +102,8 @@ integration('deletion rejects wrong identity, resumes bounded batches, and prese
   assert.equal(complete,true);assert.ok(requests>20);
   assert.equal(await db.queryRow('SELECT id FROM users WHERE id=1'),null);
   assert.ok(await db.queryRow('SELECT id FROM users WHERE id=2'));
+  assert.equal(await db.queryRow("SELECT * FROM customer_payment_checkouts WHERE provider_order_id='customer_test'"),null);
+  assert.ok(await db.queryRow("SELECT * FROM customer_payment_checkouts WHERE provider_order_id='customer_other'"));
   assert.equal(Number((await db.queryRow('SELECT COUNT(*) AS count FROM measurements WHERE customer_id=2')).count),1);
   assert.equal((await deletion.resume(started.deletionToken)).complete,true);
 });

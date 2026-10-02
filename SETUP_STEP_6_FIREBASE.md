@@ -573,7 +573,7 @@ Solution:
 
 1. ✅ Implement Firebase OTP in your app
 2. ✅ Test full login flow
-3. ✅ Proceed to **STEP 7**: Razorpay Payment Integration
+3. ✅ Proceed to **STEP 7**: Cashfree Payment Integration
 
 ---
 

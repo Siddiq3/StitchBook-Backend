@@ -35,6 +35,7 @@ const phases = [
   ['activity_log','user_id=$1','user_id'],
   ['notifications','user_id=$1','user_id'],
   ['staff','user_id=$1','user_id'],
+  ['customer_payment_checkouts', "session->>'userId'=$1::text"],
 ];
 async function hasColumn(client, table, column) {
   return (await client.query(`SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2`, [table,column])).rowCount > 0;
@@ -81,18 +82,7 @@ async function resume(token) {
   }
   if (job.token_hash !== hash(token)) throw invalidRequest('Deletion token was replaced. Please re-authenticate',401);
   if (Number(job.phase) === 0) {
-    // The current product uses prepaid orders, not recurring mandates. Cancel any
-    // migrated legacy recurring references before their ownership is removed.
-    if (await hasColumn(db.pool,'subscriptions','razorpay_subscription_id')) {
-      const records = await db.queryAll(`SELECT razorpay_subscription_id FROM subscriptions WHERE user_id=$1 AND razorpay_subscription_id IS NOT NULL LIMIT 100`,[userId]);
-      const provider = records.length ? require('./subscription.service').getRazorpayClient() : null;
-      for (const record of records) {
-        const subscription = await provider.subscriptions.fetch(record.razorpay_subscription_id);
-        if (!['cancelled','completed','expired'].includes(subscription.status)) await provider.subscriptions.cancel(record.razorpay_subscription_id);
-        await db.query('UPDATE subscriptions SET razorpay_subscription_id=NULL WHERE user_id=$1 AND razorpay_subscription_id=$2',[userId,record.razorpay_subscription_id]);
-      }
-      if (records.length === 100) return {complete:false,state:'IN_PROGRESS'};
-    }
+    // Cashfree purchases are prepaid; no recurring mandate needs cancellation.
     await db.query('UPDATE account_deletions SET phase=1,updated_at=NOW() WHERE user_id=$1 AND phase=0',[userId]);
     return {complete:false,state:'IN_PROGRESS'};
   }

@@ -8,9 +8,9 @@ function validateProductionConfig(env = process.env) {
     throw new Error('Distinct signing secrets of at least 32 characters are required');
   }
   for (const origin of env.FRONTEND_URLS.split(',')) requireHttps(origin.trim(), 'FRONTEND_URLS');
-  if (env.RAZORPAY_KEY_ID || env.RAZORPAY_KEY_SECRET || env.BILLING_ENABLED === 'true') {
-    if (!env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') || !env.RAZORPAY_KEY_SECRET || !env.RAZORPAY_WEBHOOK_SECRET) {
-      throw new Error('Production billing requires live Razorpay keys and a webhook secret');
+  if (env.CASHFREE_APP_ID || env.CASHFREE_SECRET_KEY || env.BILLING_ENABLED === 'true') {
+    if (env.CASHFREE_ENV !== 'production' || !env.CASHFREE_APP_ID || !env.CASHFREE_SECRET_KEY) {
+      throw new Error('Production billing requires Cashfree production credentials');
     }
     requireHttps(env.WEB_APP_URL, 'WEB_APP_URL');
   }

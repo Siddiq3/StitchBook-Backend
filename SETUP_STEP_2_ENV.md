@@ -184,28 +184,9 @@ Note: Backend doesn't use these directly
 (Frontend handles OTP verification)
 ```
 
-### 7. RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET
-```
-For Razorpay payment processing
-Get from: Razorpay Dashboard
+### 7. Cashfree Payment Gateway
 
-HOW TO GET:
-
-1. Go to https://dashboard.razorpay.com
-2. Log in / Sign up
-3. Go to "Settings" > "API Keys"
-4. Copy "Key ID" and "Key Secret"
-5. Make sure you're using TEST keys (not Live!)
-
-Format:
-RAZORPAY_KEY_ID=rzp_test_xxxxxxxxx
-RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxx
-
-Important:
-- Use TEST keys during development
-- Switch to LIVE keys only for production
-- Never share these keys
-```
+Configure backend-only `CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, `CASHFREE_ENV` and `CASHFREE_API_VERSION` as described in [Cashfree setup](SETUP_STEP_7_CASHFREE.md).
 
 ### 8. LOG_LEVEL
 ```
@@ -255,9 +236,9 @@ JWT_EXPIRY=7d
 FIREBASE_PROJECT_ID=tailor-app-12345
 FIREBASE_API_KEY=AIzaSyDpZY6e_8L2W9Q5R6S7T8U9V0W1X2Y3Z4
 
-# Razorpay
-RAZORPAY_KEY_ID=rzp_test_FJ7n8mA9pQ2
-RAZORPAY_KEY_SECRET=xK8pL9mN2vR5tQ1
+# Cashfree
+CASHFREE_APP_ID=sandbox_example_FJ7n8mA9pQ2
+CASHFREE_SECRET_KEY=xK8pL9mN2vR5tQ1
 
 # Logging
 LOG_LEVEL=info
@@ -293,15 +274,15 @@ Your .env should have:
 - [ ] JWT_EXPIRY
 - [ ] FIREBASE_PROJECT_ID
 - [ ] FIREBASE_API_KEY
-- [ ] RAZORPAY_KEY_ID
-- [ ] RAZORPAY_KEY_SECRET
+- [ ] CASHFREE_APP_ID
+- [ ] CASHFREE_SECRET_KEY
 - [ ] LOG_LEVEL
 
 ### ✅ Check 4: No Placeholder Values
 Make sure you replaced:
 - [ ] DATABASE_URL - actual connection string
 - [ ] JWT_SECRET - random generated key
-- [ ] RAZORPAY Keys - real keys from Razorpay
+- [ ] CASHFREE Keys - real keys from Cashfree
 - [ ] FIREBASE Keys - real keys from Firebase
 
 ---
@@ -369,7 +350,7 @@ Solution: Either
 | DATABASE_URL | Supabase | https://app.supabase.com |
 | JWT_SECRET | Generate | `openssl rand -base64 32` |
 | FIREBASE Keys | Firebase | https://console.firebase.google.com |
-| RAZORPAY Keys | Razorpay | https://dashboard.razorpay.com |
+| CASHFREE Keys | Cashfree | https://merchant.cashfree.com |
 
 ---
 
@@ -379,7 +360,7 @@ Solution: Either
 - Get DATABASE_URL → 2 minutes
 - Generate JWT_SECRET → 1 minute
 - Get Firebase keys → 2 minutes
-- Get Razorpay keys → 2 minutes
+- Get Cashfree keys → 2 minutes
 - Fill in .env → 2 minutes
 
 **Total: 10 minutes**

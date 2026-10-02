@@ -4,10 +4,10 @@ process.env.NODE_ENV='test';
 process.env.JWT_SECRET='test-access-secret-not-for-production';
 process.env.JWT_REFRESH_SECRET='test-refresh-secret-not-for-production';
 const {validateProductionConfig}=require('../src/config/production');
-const production={NODE_ENV:'production',JWT_SECRET:'a'.repeat(40),JWT_REFRESH_SECRET:'b'.repeat(40),DATABASE_URL:'postgres://database/app',REDIS_URL:'rediss://redis',GOOGLE_WEB_CLIENT_ID:'configured.apps.googleusercontent.com',FRONTEND_URLS:'https://example.org',RAZORPAY_KEY_ID:'rzp_live_example',RAZORPAY_KEY_SECRET:'test-only-key',RAZORPAY_WEBHOOK_SECRET:'test-only-webhook',WEB_APP_URL:'https://example.org'};
+const production={NODE_ENV:'production',JWT_SECRET:'a'.repeat(40),JWT_REFRESH_SECRET:'b'.repeat(40),DATABASE_URL:'postgres://database/app',REDIS_URL:'rediss://redis',GOOGLE_WEB_CLIENT_ID:'configured.apps.googleusercontent.com',FRONTEND_URLS:'https://example.org',CASHFREE_ENV:'production',CASHFREE_APP_ID:'test-only-app',CASHFREE_SECRET_KEY:'test-only-key',WEB_APP_URL:'https://example.org'};
 test('production rejects sandbox billing, HTTP return URLs, and weak signing secrets',()=>{
   assert.doesNotThrow(()=>validateProductionConfig(production));
-  for(const change of [{RAZORPAY_KEY_ID:'rzp_test_demo'},{WEB_APP_URL:'http://example.org'},{FRONTEND_URLS:'*'},{JWT_SECRET:'short'},{JWT_REFRESH_SECRET:production.JWT_SECRET}]) assert.throws(()=>validateProductionConfig({...production,...change}));
+  for(const change of [{CASHFREE_ENV:'sandbox'},{WEB_APP_URL:'http://example.org'},{FRONTEND_URLS:'*'},{JWT_SECRET:'short'},{JWT_REFRESH_SECRET:production.JWT_SECRET}]) assert.throws(()=>validateProductionConfig({...production,...change}));
 });
 test('logger redacts nested credentials and URL secrets',()=>{
   const {redact}=require('../src/utils/redact');
@@ -55,28 +55,38 @@ const db=require('../src/config/database');
 const ledger=require('../src/models/billingLedger');
 require('../src/config/redis').client.disconnect();
 const {createRecoverableOrder}=require('../src/services/recoverableCheckout');
-test('provider success followed by DB failure recovers the same order on retry',async t=>{
-  let attempted=false,saved=false,creates=0;
-  const orders=[];
-  t.mock.method(ledger,'reserveIntent',async()=>({claimed:true,attempted,provider_order_id:saved?'order_1':null}));
-  t.mock.method(db,'query',async(sql)=>{
-    if(sql.includes('attempted=TRUE')) {attempted=true;return {rowCount:1};}
-    if(sql.includes('provider_order_id')){if(!saved){saved=true;throw new Error('database timeout');}}
+const cashfree = require('../src/services/cashfree');
+test('provider success followed by DB failure recovers the same Cashfree order on retry', async t => {
+  let attempted = false, saved = false, creates = 0, providerOrder;
+  t.mock.method(ledger, 'reserveIntent', async () => ({attempted,provider_order_id:null}));
+  t.mock.method(cashfree, 'getOrder', async () => {
+    if (!providerOrder) throw Object.assign(new Error('Not found'), {statusCode:404});
+    return providerOrder;
   });
-  const args={id:'intent',userId:1,plan:'basic',amount:29900,receipt:'stable',notes:{},razorpay:{orders:{all:async()=>({items:orders}),create:async()=>{creates++;const order={id:'order_1',amount:29900,currency:'INR',receipt:'stable'};orders.push(order);return order;}}}};
-  await assert.rejects(createRecoverableOrder(args),/database timeout/);
-  saved=false;
-  t.mock.method(db,'query',async sql=>{if(sql.includes('provider_order_id'))saved=true;});
-  const recovered=await createRecoverableOrder(args);
-  assert.equal(recovered.id,'order_1');assert.equal(creates,1);assert.equal(saved,true);
+  t.mock.method(cashfree, 'createOrder', async body => {
+    creates++;
+    providerOrder = {...body,payment_session_id:'session_test'};
+    return providerOrder;
+  });
+  t.mock.method(db, 'query', async sql => {
+    if (sql.includes('attempted=TRUE')) {attempted=true;return {rowCount:1};}
+    if (sql.includes('provider_order_id') && !saved) {saved=true;throw new Error('database timeout');}
+  });
+  const args = {id:'intent',userId:1,plan:'basic',amount:29900,receipt:'stable',customer:{phone:'9876543210'},returnUrl:'https://example.org'};
+  await assert.rejects(createRecoverableOrder(args), /database timeout/);
+  const recovered = await createRecoverableOrder(args);
+  assert.equal(recovered.order_id, 'upgrade_intent');
+  assert.equal(creates, 1);
 });
-test('timeout never causes another provider order until reconciliation finds the original',async t=>{
-  let attempted=false,creates=0;
-  t.mock.method(ledger,'reserveIntent',async()=>({claimed:true,attempted}));
-  t.mock.method(db,'query',async sql=>{if(sql.includes('attempted=TRUE')){attempted=true;return {rowCount:1};}});
-  const args={id:'intent',userId:1,plan:'basic',amount:29900,receipt:'stable',razorpay:{orders:{all:async()=>({items:[]}),create:async()=>{creates++;throw new Error('timeout');}}}};
-  await assert.rejects(createRecoverableOrder(args),/timeout/);
-  await assert.rejects(createRecoverableOrder(args),/pending reconciliation/);
+test('timeout never creates another Cashfree order before reconciliation', async t => {
+  let attempted = false, creates = 0;
+  t.mock.method(ledger, 'reserveIntent', async () => ({attempted}));
+  t.mock.method(db, 'query', async sql => {if (sql.includes('attempted=TRUE')) {attempted=true;return {rowCount:1};}});
+  t.mock.method(cashfree, 'getOrder', async () => {throw Object.assign(new Error('Not found'), {statusCode:404});});
+  t.mock.method(cashfree, 'createOrder', async () => {creates++;throw new Error('timeout');});
+  const args = {id:'intent',userId:1,plan:'basic',amount:29900,receipt:'stable',customer:{phone:'9876543210'}};
+  await assert.rejects(createRecoverableOrder(args), /timeout/);
+  await assert.rejects(createRecoverableOrder(args), /pending reconciliation/);
   assert.equal(creates,1);
 });
 test('cross-tenant order and measurement IDs cannot be read',async t=>{

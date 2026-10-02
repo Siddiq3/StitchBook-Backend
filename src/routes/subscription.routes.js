@@ -24,10 +24,8 @@ router.get('/status', requirePermission('shop:read'), subscriptionController.get
 router.post('/check-active', requirePermission('shop:read'), subscriptionController.checkActive);
 
 // Retired: these wrote to the legacy subscriptions table by id without an
-// ownership check, and the old in-app Razorpay checkout never granted access.
+// ownership check, and the retired in-app checkout never granted access.
 router.put('/:subscriptionId/status', subscriptionController.retiredEndpoint);
 router.delete('/:subscriptionId', subscriptionController.retiredEndpoint);
-router.post('/razorpay/create-order', subscriptionController.retiredEndpoint);
-router.post('/razorpay/verify-payment', subscriptionController.retiredEndpoint);
 
 module.exports = router;

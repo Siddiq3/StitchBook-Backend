@@ -451,25 +451,9 @@ export const checkActiveSubscription = async () => {
   return api.post('/subscription/check-active');
 };
 
-/**
- * Create subscription after payment
- * @param {object} subscriptionData - {plan, razorpay_subscription_id, status, expiry_date}
- * @returns {Promise}
- */
-export const createSubscription = async (subscriptionData) => {
-  return api.post('/subscription/create', subscriptionData);
-};
+// Subscription purchases use the website Cashfree upgrade-session flow.
+// Mobile reads GET /subscription/status and POST /subscription/check-active.
 
-/**
- * Verify subscription (called after Razorpay payment)
- * @param {object} verificationData - {razorpay_subscription_id, plan, status, expiry_date}
- * @returns {Promise}
- */
-export const verifySubscription = async (verificationData) => {
-  return api.post('/subscription/verify', verificationData);
-};
-
-export default api;
 ```
 
 ---

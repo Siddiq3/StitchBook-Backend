@@ -21,7 +21,7 @@ Complete backend for a Tailor Management Application (similar to Darzee) built w
 - **Customer Management** - Add, update, delete, list customers
 - **Dynamic Measurements** - Store custom measurement fields as JSON
 - **Order Management** - Create, track, and update orders
-- **Subscription System** - Razorpay integration ready
+- **Subscription System** - Cashfree integration ready
 - **JWT Token Protection** - Secure API endpoints
 - **Rate Limiting** - Protect API from abuse
 - **Error Handling** - Comprehensive error management
@@ -144,9 +144,9 @@ JWT_EXPIRY=7d
 FIREBASE_PROJECT_ID=your_firebase_project_id
 FIREBASE_API_KEY=your_firebase_api_key
 
-# Razorpay
-RAZORPAY_KEY_ID=your_razorpay_key_id
-RAZORPAY_KEY_SECRET=your_razorpay_key_secret
+# Cashfree
+CASHFREE_APP_ID=your_cashfree_key_id
+CASHFREE_SECRET_KEY=your_cashfree_key_secret
 ```
 
 #### Setup PostgreSQL Database
@@ -205,8 +205,8 @@ curl http://localhost:5000/health
 | `JWT_EXPIRY` | Token expiry time | 7d |
 | `FIREBASE_PROJECT_ID` | Firebase project ID | your_project_id |
 | `FIREBASE_API_KEY` | Firebase API key | your_api_key |
-| `RAZORPAY_KEY_ID` | Razorpay key ID | your_key_id |
-| `RAZORPAY_KEY_SECRET` | Razorpay secret | your_secret |
+| `CASHFREE_APP_ID` | Cashfree key ID | your_key_id |
+| `CASHFREE_SECRET_KEY` | Cashfree secret | your_secret |
 
 ## 📚 API Documentation
 
@@ -468,47 +468,9 @@ Get order statistics (requires auth)
 
 ---
 
-## 💳 Subscription Endpoints
+## 💳 Subscription payments
 
-### POST `/subscription/create`
-Create subscription (requires auth, after Razorpay payment)
-
-**Request:**
-```json
-{
-  "plan": "premium",
-  "razorpay_subscription_id": "sub_123456",
-  "status": "active",
-  "expiry_date": "2024-12-31"
-}
-```
-
-### GET `/subscription/status`
-Get subscription status (requires auth)
-
-### POST `/subscription/verify`
-Verify subscription after Razorpay payment
-
-**Request:**
-```json
-{
-  "razorpay_subscription_id": "sub_123456",
-  "plan": "premium",
-  "status": "active",
-  "expiry_date": "2024-12-31"
-}
-```
-
-### POST `/subscription/check-active`
-Check if user has active subscription (requires auth)
-
-### PUT `/subscription/:subscriptionId/status`
-Update subscription status (requires auth)
-
-### DELETE `/subscription/:subscriptionId`
-Cancel subscription (requires auth)
-
----
+Cashfree prepaid plans use secure website upgrade sessions. See [Cashfree setup](SETUP_STEP_7_CASHFREE.md) for configuration, migration, API requests and sandbox verification. Mobile reads `/subscription/status` and `/subscription/check-active`; legacy client-written activation endpoints return 410.
 
 ## 🗄 Database Schema
 
@@ -570,7 +532,7 @@ updated_at
 id (Primary Key)
 user_id (Foreign Key)
 plan (Required)
-razorpay_subscription_id (Unique)
+provider_subscription_id (Unique)
 status (Enum: active, inactive, expired)
 expiry_date
 created_at

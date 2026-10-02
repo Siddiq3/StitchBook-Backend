@@ -38,7 +38,7 @@ test('normalizeSubscriptionState returns trial access before expiry and active a
 });
 
 // ---------------------------------------------------------------------------
-// Payment activation hardening. Redis, the users table and Razorpay are stubbed.
+// Payment activation hardening. Redis, the users table and Cashfree are stubbed.
 // ---------------------------------------------------------------------------
 const { client: redisClient } = require('../src/config/redis');
 const UserModel = require('../src/models/user.model');
@@ -70,105 +70,38 @@ const setupPaymentStubs = () => {
   return { store, updates };
 };
 
-test('checkout verification activates the session plan, not a browser-supplied plan', async (t) => {
-  const { updates } = setupPaymentStubs();
-  t.mock.method(SubscriptionService, 'validateUpgradeSession', async () => ({
-    sessionId: 's1', userId: 'u1', plan: 'basic', razorpayOrderId: 'order_1',
-  }));
-  t.mock.method(SubscriptionService, 'verifyRazorpaySignature', () => true);
-  t.mock.method(SubscriptionService, 'getRazorpayClient', () => ({payments:{fetch:async()=>({status:'captured',order_id:'order_1',amount:29900,currency:'INR'})}}));
-
-  const result = await SubscriptionService.verifyUpgradeCheckoutPayment({
-    sessionId: 's1',
-    razorpayOrderId: 'order_1',
-    razorpayPaymentId: 'pay_1',
-    razorpaySignature: 'sig',
-    plan: 'annual',
-  });
-
-  assert.equal(updates.length, 1);
-  assert.equal(updates[0].plan, 'basic');
-  assert.equal(result.plan, 'basic');
-  const days = (new Date(result.subscriptionEndsAt) - Date.now()) / (24 * 60 * 60 * 1000);
-  assert.ok(days > 29 && days <= 30);
+const cashfree = require('../src/services/cashfree');
+const db = require('../src/config/database');
+test('checkout verification activates only the server session plan and is idempotent', async t => {
+  const {updates} = setupPaymentStubs();
+  t.mock.method(SubscriptionService,'validateUpgradeSession',async()=>({userId:'u1',plan:'basic',cashfreeOrderId:'upgrade_s1'}));
+  t.mock.method(cashfree,'verifiedPayment',async(id,amount)=>{assert.equal(id,'upgrade_s1');assert.equal(amount,299);return {cf_payment_id:'1'};});
+  const request={sessionId:'s1',cashfreeOrderId:'upgrade_s1',plan:'annual'};
+  const result=await SubscriptionService.verifyUpgradeCheckoutPayment(request);
+  const retry=await SubscriptionService.verifyUpgradeCheckoutPayment(request);
+  assert.equal(updates.length,1);assert.equal(result.plan,'basic');assert.equal(retry.alreadyProcessed,true);
 });
-
-test('checkout verification rejects an order id that does not belong to the session', async (t) => {
-  const { updates } = setupPaymentStubs();
-  t.mock.method(SubscriptionService, 'validateUpgradeSession', async () => ({
-    sessionId: 's1', userId: 'u1', plan: 'basic', razorpayOrderId: 'order_1',
-  }));
-  t.mock.method(SubscriptionService, 'verifyRazorpaySignature', () => true);
-  t.mock.method(SubscriptionService, 'getRazorpayClient', () => ({payments:{fetch:async()=>({status:'captured',order_id:'order_1',amount:29900,currency:'INR'})}}));
-
-  await assert.rejects(
-    SubscriptionService.verifyUpgradeCheckoutPayment({
-      sessionId: 's1', razorpayOrderId: 'order_other', razorpayPaymentId: 'pay_1', razorpaySignature: 'sig',
-    }),
-    /Payment verification failed/
-  );
-  assert.equal(updates.length, 0);
+test('checkout rejects a foreign order before calling Cashfree', async t => {
+  setupPaymentStubs();
+  t.mock.method(SubscriptionService,'validateUpgradeSession',async()=>({userId:'u1',plan:'basic',cashfreeOrderId:'upgrade_s1'}));
+  const verify=t.mock.method(cashfree,'verifiedPayment',async()=>({cf_payment_id:'1'}));
+  await assert.rejects(SubscriptionService.verifyUpgradeCheckoutPayment({sessionId:'s1',cashfreeOrderId:'foreign'}),/Payment verification failed/);
+  assert.equal(verify.mock.callCount(),0);
 });
-
-test('a payment activates the subscription only once', async () => {
-  const { updates } = setupPaymentStubs();
-
-  const first = await SubscriptionService.activatePaidPlan({ userId: 'u1', plan: 'team', razorpayPaymentId: 'pay_2' });
-  const second = await SubscriptionService.activatePaidPlan({ userId: 'u1', plan: 'team', razorpayPaymentId: 'pay_2' });
-
-  assert.equal(updates.length, 1);
-  assert.equal(first.subscriptionStatus, 'active');
-  assert.equal(second.alreadyProcessed, true);
+test('webhook activates persisted ownership after checkout session expiry', async t => {
+  const {updates}=setupPaymentStubs();
+  t.mock.method(db,'queryRow',async()=>({user_id:'u3',plan:'basic',amount:29900}));
+  t.mock.method(cashfree,'verifiedPayment',async()=>({cf_payment_id:'3'}));
+  await SubscriptionService.activateFromWebhookPayment({orderId:'upgrade_s3',paymentId:'3',plan:'pro',userId:'attacker'});
+  assert.equal(updates[0].userId,'u3');assert.equal(updates[0].plan,'basic');
 });
-
-test('webhook activation trusts order notes, not payment notes', async (t) => {
-  const { updates } = setupPaymentStubs();
-  t.mock.method(SubscriptionService, 'getRazorpayClient', () => ({
-    orders: {
-      fetch: async () => ({
-        id: 'order_3',
-        amount: 29900,
-        currency: 'INR',
-        notes: { stitch_upgrade_session_id: 's3', stitch_user_id: 'u3', stitch_plan: 'basic' },
-      }),
-    },
-  }));
-
-  const result = await SubscriptionService.activateFromWebhookPayment({
-    id: 'pay_3',
-    order_id: 'order_3',
-    amount: 29900,
-    currency: 'INR',
-    status: 'captured',
-    notes: { stitch_upgrade_session_id: 's3', stitch_plan: 'annual', stitch_user_id: 'attacker' },
-  });
-
-  assert.equal(updates.length, 1);
-  assert.equal(updates[0].userId, 'u3');
-  assert.equal(updates[0].plan, 'basic');
-  assert.equal(result.plan, 'basic');
-});
-
-test('webhook activation ignores amount mismatches and non-subscription orders', async (t) => {
-  const { updates } = setupPaymentStubs();
-  const orders = {
-    order_low: { amount: 100, currency: 'INR', notes: { stitch_upgrade_session_id: 's', stitch_user_id: 'u', stitch_plan: 'pro' } },
-    order_customer: { amount: 50000, currency: 'INR', notes: { stitch_order_id: '42' } },
-  };
-  t.mock.method(SubscriptionService, 'getRazorpayClient', () => ({
-    orders: { fetch: async (id) => orders[id] },
-  }));
-
-  const mismatch = await SubscriptionService.activateFromWebhookPayment({
-    id: 'pay_low', order_id: 'order_low', amount: 100, currency: 'INR', status: 'captured',
-  });
-  const customer = await SubscriptionService.activateFromWebhookPayment({
-    id: 'pay_customer', order_id: 'order_customer', amount: 50000, currency: 'INR', status: 'captured',
-  });
-
-  assert.equal(mismatch.ignored, true);
-  assert.equal(customer.ignored, true);
-  assert.equal(updates.length, 0);
+test('webhook rejects payment reference mismatch and ignores unknown checkout', async t => {
+  const {updates}=setupPaymentStubs();
+  t.mock.method(db,'queryRow',async(sql,[id])=>id==='upgrade_known'?{user_id:'u',plan:'basic',amount:29900}:null);
+  t.mock.method(cashfree,'verifiedPayment',async()=>({cf_payment_id:'expected'}));
+  await assert.rejects(SubscriptionService.activateFromWebhookPayment({orderId:'upgrade_known',paymentId:'foreign'}),/reference mismatch/);
+  assert.equal((await SubscriptionService.activateFromWebhookPayment({orderId:'unknown',paymentId:'1'})).ignored,true);
+  assert.equal(updates.length,0);
 });
 
 test('PUT /user/profile only forwards the name field', async (t) => {
@@ -196,35 +129,24 @@ test('PUT /user/profile only forwards the name field', async (t) => {
   assert.deepEqual(forwarded, { name: 'Asha' });
 });
 
-test('webhook handler checks the signature and only activates on captured payments', async (t) => {
-  const crypto = require('crypto');
-  const webhookController = require('../src/controllers/webhook.controller');
-  const ledger = require('../src/models/billingLedger');
-  t.mock.method(ledger, 'claimWebhook', async () => ({state:'claimed',attempt:1}));
-  t.mock.method(ledger, 'finishWebhook', async () => {});
-  process.env.RAZORPAY_WEBHOOK_SECRET = 'whsec_test';
-  const activate = t.mock.method(SubscriptionService, 'activateFromWebhookPayment', async () => ({
-    userId: 'u1', plan: 'basic', subscriptionStatus: 'active',
-  }));
-
-  const call = async (body, signature) => {
-    const raw = Buffer.from(JSON.stringify(body));
-    const sig = signature || crypto.createHmac('sha256', 'whsec_test').update(raw).digest('hex');
-    const res = {
-      statusCode: 0,
-      status(code) { this.statusCode = code; return this; },
-      json(payload) { this.body = payload; return this; },
-    };
-    await webhookController.handleRazorpayWebhook({ body: raw, get: () => sig }, res);
+test('Cashfree webhook verifies raw body and timestamp and ignores failed payments', async t => {
+  const crypto=require('crypto');
+  const controller=require('../src/controllers/webhook.controller');
+  const ledger=require('../src/models/billingLedger');
+  t.mock.method(ledger,'claimWebhook',async()=>({state:'claimed',attempt:1}));
+  t.mock.method(ledger,'finishWebhook',async()=>{});
+  process.env.CASHFREE_SECRET_KEY='test-only-secret';
+  const activate=t.mock.method(SubscriptionService,'activateFromWebhookPayment',async()=>({userId:'u1'}));
+  const call=async(status,signature,timestamp='1700000000')=>{
+    const raw=Buffer.from(JSON.stringify({type:'PAYMENT_SUCCESS_WEBHOOK',data:{order:{order_id:'upgrade_s1'},payment:{cf_payment_id:'1',payment_status:status}}}));
+    const sig=signature||crypto.createHmac('sha256','test-only-secret').update(timestamp).update(raw).digest('base64');
+    const res={status(code){this.statusCode=code;return this;},json(body){this.body=body;return this;}};
+    await controller.handleCashfreeWebhook({body:raw,get:header=>header==='x-webhook-signature'?sig:timestamp},res);
     return res;
   };
-
-  const payment = { id: 'pay_1', order_id: 'order_1', amount: 29900, currency: 'INR' };
-
-  assert.equal((await call({ event: 'payment.captured', payload: { payment: { entity: { ...payment, status: 'captured' } } } }, 'bad')).statusCode, 400);
-  assert.equal((await call({ event: 'payment.authorized', payload: { payment: { entity: { ...payment, status: 'authorized' } } } })).statusCode, 200);
-  assert.equal(activate.mock.callCount(), 0);
-
-  assert.equal((await call({ event: 'payment.captured', payload: { payment: { entity: { ...payment, status: 'captured' } } } })).statusCode, 200);
-  assert.equal(activate.mock.callCount(), 1);
+  assert.equal((await call('SUCCESS','bad')).statusCode,400);
+  assert.equal((await call('FAILED')).statusCode,200);
+  assert.equal(activate.mock.callCount(),0);
+  assert.equal((await call('SUCCESS')).statusCode,200);
+  assert.equal(activate.mock.callCount(),1);
 });

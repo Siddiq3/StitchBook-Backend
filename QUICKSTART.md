@@ -50,8 +50,8 @@ JWT_EXPIRY=7d
 FIREBASE_PROJECT_ID=your_firebase_project
 FIREBASE_API_KEY=your_firebase_key
 
-RAZORPAY_KEY_ID=your_razorpay_key
-RAZORPAY_KEY_SECRET=your_razorpay_secret
+CASHFREE_APP_ID=your_cashfree_key
+CASHFREE_SECRET_KEY=your_cashfree_secret
 ```
 
 ### Step 4: Start Server
@@ -180,7 +180,7 @@ npm install
 1. ✅ Database setup complete
 2. ✅ Server running
 3. 📋 Connect to React Native frontend
-4. 📋 Setup Razorpay integration
+4. 📋 Setup Cashfree integration
 5. 📋 Setup Firebase OTP verification
 6. 📋 Deploy to production (Heroku, AWS, Railway)
 

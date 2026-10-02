@@ -364,7 +364,7 @@ Once everything is set up:
 
 1. ✅ Test login with Firebase OTP
 2. ✅ Test creating shops and customers
-3. ✅ Setup Razorpay (follow SETUP_STEP_7_RAZORPAY.md)
+3. ✅ Setup Cashfree (follow SETUP_STEP_7_CASHFREE.md)
 4. ✅ Deploy to production (follow SETUP_STEP_8_DEPLOYMENT.md)
 
 ---
@@ -374,7 +374,7 @@ Once everything is set up:
 - **Supabase**: Connection string (in .env)
 - **Firebase**: Private key JSON (keep in secure location)
 - **JWT Secret**: In .env (strong random key)
-- **Razorpay Keys**: In .env when needed
+- **Cashfree Keys**: In .env when needed
 
 **NEVER commit .env files to git!** ❌
 

@@ -7,7 +7,8 @@ const PaymentModel = require('../models/payment.model');
 const OrderModel = require('../models/order.model');
 const ActivityLogModel = require('../models/activity.model');
 const logger = require('../utils/logger');
-const Razorpay = require('razorpay');
+const cashfree = require('./cashfree');
+const db = require('../config/database');
 const crypto = require('crypto');
 const { transaction } = require('../models/billingLedger');
 const { client: redis, isReady: isRedisReady, keyPrefix } = require('../config/redis');
@@ -16,165 +17,63 @@ const CHECKOUT_TTL_SECONDS = 15 * 60;
 const checkoutKey = (token) => `${keyPrefix}payment_checkout:${token}`;
 
 class PaymentService {
-  static async createRazorpayCheckoutSession({ order, userId, shopId, amount, customer }) {
-    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-      throw new Error('Razorpay keys are not configured');
-    }
-
-    if (!isRedisReady()) {
-      throw new Error('Payment checkout is temporarily unavailable');
-    }
-
-    const payableAmount = Number(amount || order.balance_due || 0);
-    const balanceDue = Number(order.balance_due || 0);
-    const payableAmountPaise = Math.round(payableAmount * 100);
-
-    if (!payableAmount || payableAmount <= 0) {
-      throw new Error('Payment amount must be greater than zero');
-    }
-
-    if (payableAmountPaise < 100) {
-      throw new Error('Payment amount must be at least ₹1');
-    }
-
-    if (balanceDue > 0 && payableAmount > balanceDue) {
-      throw new Error('Payment amount cannot be more than balance due');
-    }
-
-    const razorpay = new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET,
-    });
-
-    const razorpayOrder = await razorpay.orders.create({
-      amount: payableAmountPaise,
-      currency: 'INR',
-      receipt: `order_${order.id}_${Date.now()}`.slice(0, 40),
-      notes: {
-        stitch_order_id: String(order.id),
-        stitch_shop_id: String(shopId),
-      },
-    });
-
+  static async createCashfreeCheckoutSession({order,userId,shopId,amount,customer}) {
+    if (!isRedisReady()) throw new Error('Payment checkout is temporarily unavailable');
+    const payableAmount = amount == null ? Number(order.balance_due) : Number(amount);
+    if (!Number.isFinite(payableAmount) || payableAmount < 1) throw new Error('Payment amount must be at least ₹1');
+    if (payableAmount > Number(order.balance_due)) throw new Error('Payment amount cannot be more than balance due');
+    const details = cashfree.customerDetails(`order_${order.id}`,customer);
     const checkoutToken = crypto.randomBytes(32).toString('hex');
-    const session = {
-      checkoutToken,
-      userId,
-      shopId,
-      orderId: order.id,
-      orderNumber: order.order_number,
-      amount: payableAmount,
-      currency: 'INR',
-      razorpayOrderId: razorpayOrder.id,
-      customer: {
-        name: customer?.name || '',
-        email: customer?.email || '',
-        phone: customer?.phone || '',
-      },
-      createdAt: new Date().toISOString(),
-    };
-
-    await redis.set(checkoutKey(checkoutToken), JSON.stringify(session), 'EX', CHECKOUT_TTL_SECONDS);
-
-    return {
-      checkoutToken,
-      expiresInSeconds: CHECKOUT_TTL_SECONDS,
-      checkoutUrl: `/checkout?checkoutToken=${checkoutToken}`,
-      keyId: process.env.RAZORPAY_KEY_ID,
-      orderId: session.orderId,
-      orderNumber: session.orderNumber,
-      amount: session.amount,
-      currency: session.currency,
-      razorpayOrderId: session.razorpayOrderId,
-      customer: session.customer,
-    };
+    const cashfreeOrderId = `customer_${crypto.randomUUID()}`;
+    const session = {checkoutToken,userId,shopId,orderId:order.id,orderNumber:order.order_number,
+      amount:Math.round(payableAmount*100)/100,currency:'INR',cashfreeOrderId,customer:customer||{}};
+    // Save ownership before crossing the provider boundary so webhook recovery
+    // remains possible if the provider response or Redis write is lost.
+    await db.query('INSERT INTO customer_payment_checkouts(provider_order_id,session) VALUES($1,$2)',[cashfreeOrderId,session]);
+    const baseUrl = require('./subscription.service').getUpgradePageBaseUrl();
+    const providerOrder = await cashfree.createOrder({order_id:cashfreeOrderId,order_amount:session.amount,
+      order_currency:'INR', customer_details:details,
+      order_meta:{return_url:`${baseUrl}/checkout?checkoutToken=${checkoutToken}&order_id={order_id}`}},crypto.randomUUID());
+    if (providerOrder.order_id !== cashfreeOrderId || providerOrder.order_currency !== 'INR' || Math.round(Number(providerOrder.order_amount)*100) !== Math.round(session.amount*100)) throw new Error('Checkout amount mismatch');
+    session.paymentSessionId = providerOrder.payment_session_id;
+    await redis.set(checkoutKey(checkoutToken),JSON.stringify(session),'EX',CHECKOUT_TTL_SECONDS);
+    return {...session,mode:cashfree.getMode(),expiresInSeconds:CHECKOUT_TTL_SECONDS,checkoutUrl:`/checkout?checkoutToken=${checkoutToken}`};
   }
 
-  static async getRazorpayCheckoutSession(checkoutToken) {
-    if (!checkoutToken) {
-      throw new Error('Checkout token is required');
-    }
-
-    if (!isRedisReady()) {
-      throw new Error('Payment checkout is temporarily unavailable');
-    }
-
+  static async getCashfreeCheckoutSession(checkoutToken) {
+    if (!checkoutToken) throw new Error('Checkout token is required');
+    if (!isRedisReady()) throw new Error('Payment checkout is temporarily unavailable');
     const raw = await redis.get(checkoutKey(checkoutToken));
-    if (!raw) {
-      throw new Error('Checkout session expired or invalid');
-    }
-
+    if (!raw) throw new Error('Checkout session expired or invalid');
     const session = JSON.parse(raw);
-
-    return {
-      keyId: process.env.RAZORPAY_KEY_ID,
-      orderId: session.orderId,
-      orderNumber: session.orderNumber,
-      amount: session.amount,
-      currency: session.currency,
-      razorpayOrderId: session.razorpayOrderId,
-      customer: session.customer,
-    };
+    return {orderId:session.orderId,orderNumber:session.orderNumber,amount:session.amount,currency:session.currency,
+      cashfreeOrderId:session.cashfreeOrderId,paymentSessionId:session.paymentSessionId,mode:cashfree.getMode(),customer:session.customer};
   }
 
-  static async verifyAndRecordRazorpayPayment({ checkoutToken, razorpayOrderId, razorpayPaymentId, razorpaySignature }) {
-    if (!checkoutToken || !razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
-      throw new Error('All payment details are required');
-    }
+  static async recordCashfreeSession(session, paymentId) {
+    const captured = await cashfree.verifiedPayment(session.cashfreeOrderId,session.amount);
+    if (paymentId && String(captured.cf_payment_id) !== String(paymentId)) throw new Error('Payment reference mismatch');
+    const cashfreePaymentId = String(captured.cf_payment_id);
+    const payment = await this.createPayment(session.orderId,session.shopId,session.amount,'cashfree',
+      new Date().toISOString().slice(0,10),session.userId,
+      `Cashfree payment ID: ${cashfreePaymentId} | Cashfree order ID: ${session.cashfreeOrderId}`,`cashfree:${cashfreePaymentId}`);
+    return {payment,orderId:session.orderId,amount:session.amount,cashfreePaymentId};
+  }
 
-    if (!isRedisReady()) {
-      throw new Error('Payment checkout is temporarily unavailable');
-    }
-
-    const key = checkoutKey(checkoutToken);
-    const raw = await redis.get(key);
-    if (!raw) {
-      throw new Error('Checkout session expired or invalid');
-    }
-
+  static async verifyAndRecordCashfreePayment({checkoutToken,cashfreeOrderId}) {
+    if (!checkoutToken || !cashfreeOrderId) throw new Error('All payment details are required');
+    if (!isRedisReady()) throw new Error('Payment checkout is temporarily unavailable');
+    const raw = await redis.get(checkoutKey(checkoutToken));
+    if (!raw) throw new Error('Checkout session expired or invalid');
     const session = JSON.parse(raw);
-    if (session.razorpayOrderId !== razorpayOrderId) {
-      throw new Error('Payment verification failed');
-    }
+    if (session.cashfreeOrderId !== cashfreeOrderId) throw new Error('Payment verification failed');
+    return this.recordCashfreeSession(session);
+  }
 
-    const expectedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-      .digest('hex');
-
-    const expectedBuffer = Buffer.from(expectedSignature);
-    const receivedBuffer = Buffer.from(razorpaySignature);
-    const isValidSignature =
-      expectedBuffer.length === receivedBuffer.length &&
-      crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
-
-    if (!isValidSignature) {
-      throw new Error('Payment verification failed');
-    }
-
-    const provider = new Razorpay({key_id:process.env.RAZORPAY_KEY_ID,key_secret:process.env.RAZORPAY_KEY_SECRET});
-    const captured = await provider.payments.fetch(razorpayPaymentId);
-    if(captured.status!=='captured'||captured.order_id!==razorpayOrderId||captured.currency!=='INR'||Number(captured.amount)!==Math.round(Number(session.amount)*100)) throw new Error('Payment is not captured or amount does not match');
-    const notes = `Razorpay payment ID: ${razorpayPaymentId} | Razorpay order ID: ${razorpayOrderId}`;
-    const payment = await this.createPayment(
-      session.orderId,
-      session.shopId,
-      session.amount,
-      'razorpay',
-      new Date().toISOString().split('T')[0],
-      session.userId,
-      notes,
-      razorpayPaymentId
-    );
-
-    // Keep the session until TTL for safe verification retries.
-
-    return {
-      payment,
-      orderId: session.orderId,
-      amount: session.amount,
-      razorpayPaymentId,
-    };
+  static async recordFromWebhook({orderId,paymentId}) {
+    const row = await db.queryRow('SELECT session FROM customer_payment_checkouts WHERE provider_order_id=$1',[orderId]);
+    if (!row) return {ignored:true,reason:'Unknown customer checkout'};
+    return this.recordCashfreeSession(row.session,paymentId);
   }
 
   /**

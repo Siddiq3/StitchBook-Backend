@@ -681,7 +681,7 @@
       "description": "Subscription and payment management",
       "item": [
         {
-          "name": "1. Create Subscription (After Payment)",
+          "name": "Create upgrade session",
           "request": {
             "method": "POST",
             "header": [
@@ -696,14 +696,14 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"plan\": \"premium\",\n  \"razorpay_subscription_id\": \"sub_1234567890\",\n  \"status\": \"active\",\n  \"expiry_date\": \"2026-12-31\"\n}"
+              "raw": "{\n  \"plan\": \"basic\"\n}"
             },
             "url": {
-              "raw": "{{base_url}}/subscription/create",
+              "raw": "{{base_url}}/subscription/create-upgrade-session",
               "host": ["{{base_url}}"],
-              "path": ["subscription", "create"]
+              "path": ["subscription", "create-upgrade-session"]
             },
-            "description": "Create subscription after Razorpay payment"
+            "description": "Create server-owned checkout session for website Cashfree purchase"
           },
           "response": []
         },
@@ -727,7 +727,7 @@
           "response": []
         },
         {
-          "name": "3. Verify Subscription (Razorpay)",
+          "name": "Verify Cashfree upgrade payment",
           "request": {
             "method": "POST",
             "header": [
@@ -738,14 +738,14 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"razorpay_subscription_id\": \"sub_1234567890\",\n  \"plan\": \"premium\",\n  \"status\": \"active\",\n  \"expiry_date\": \"2026-12-31\"\n}"
+              "raw": "{\n  \"cashfree_order_id\": \"upgrade_SESSION_ID\"\n}"
             },
             "url": {
-              "raw": "{{base_url}}/subscription/verify",
+              "raw": "{{base_url}}/subscription/upgrade-session/{{sessionId}}/verify",
               "host": ["{{base_url}}"],
-              "path": ["subscription", "verify"]
+              "path": ["subscription", "upgrade-session", "{{sessionId}}", "verify"]
             },
-            "description": "Verify subscription after Razorpay payment (public endpoint)\n\nThis endpoint is called by Razorpay webhook"
+            "description": "Verify paid Cashfree order against its server-owned upgrade session"
           },
           "response": []
         },

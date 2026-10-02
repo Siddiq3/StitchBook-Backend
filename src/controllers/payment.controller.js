@@ -11,10 +11,10 @@ const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 
 /**
- * POST /payment/razorpay/create-order
+ * POST /payment/cashfree/create-order
  * Create a secure short-lived checkout session for order payment
  */
-exports.createRazorpayOrderPayment = async (req, res) => {
+exports.createCashfreeOrderPayment = async (req, res) => {
   try {
     const userId = req.user.id;
     const { orderId, amount, customer } = req.body;
@@ -26,7 +26,7 @@ exports.createRazorpayOrderPayment = async (req, res) => {
     const shop = await AuthorizationService.getUserShop(userId);
     const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
 
-    const checkout = await PaymentService.createRazorpayCheckoutSession({
+    const checkout = await PaymentService.createCashfreeCheckoutSession({
       order,
       userId,
       shopId: shop.id,
@@ -36,7 +36,7 @@ exports.createRazorpayOrderPayment = async (req, res) => {
 
     responder.success(res, 201, 'Checkout session created', checkout);
   } catch (error) {
-    logger.error('Create Razorpay order payment error:', error.message);
+    logger.error('Create Cashfree order payment error:', error.message);
 
     if (error.message.includes('Unauthorized')) {
       return responder.error(res, 403, error.message);
@@ -50,43 +50,32 @@ exports.createRazorpayOrderPayment = async (req, res) => {
  * GET /payment/checkout-session/:checkoutToken
  * Get safe checkout details for web page
  */
-exports.getRazorpayCheckoutSession = async (req, res) => {
+exports.getCashfreeCheckoutSession = async (req, res) => {
   try {
     const { checkoutToken } = req.params;
-    const checkout = await PaymentService.getRazorpayCheckoutSession(checkoutToken);
+    const checkout = await PaymentService.getCashfreeCheckoutSession(checkoutToken);
     responder.success(res, 200, 'Checkout session retrieved', checkout);
   } catch (error) {
-    logger.error('Get Razorpay checkout session error:', error.message);
+    logger.error('Get Cashfree checkout session error:', error.message);
     responder.error(res, 400, error.message);
   }
 };
 
 /**
- * POST /payment/razorpay/verify-payment
- * Verify Razorpay signature and record payment
+ * POST /payment/cashfree/verify-payment
+ * Verify Cashfree status and record payment
  */
-exports.verifyRazorpayOrderPayment = async (req, res) => {
+exports.verifyCashfreeOrderPayment = async (req, res) => {
   try {
-    const {
-      checkoutToken,
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-    } = req.body;
-
-    const result = await PaymentService.verifyAndRecordRazorpayPayment({
-      checkoutToken,
-      razorpayOrderId: razorpay_order_id,
-      razorpayPaymentId: razorpay_payment_id,
-      razorpaySignature: razorpay_signature,
-    });
+    const {checkoutToken,cashfree_order_id} = req.body || {};
+    const result = await PaymentService.verifyAndRecordCashfreePayment({checkoutToken,cashfreeOrderId:cashfree_order_id});
 
     responder.success(res, 200, 'Payment verified and recorded', result);
   } catch (error) {
-    logger.error('Verify Razorpay order payment error:', error.message);
+    logger.error('Verify Cashfree order payment error:', error.message);
 
     if (error.message === 'Payment verification failed') {
-      return responder.error(res, 400, 'Payment verification failed', { code: 'INVALID_SIGNATURE' });
+      return responder.error(res, 400, 'Payment verification failed', { code: 'INVALID_PAYMENT' });
     }
 
     responder.error(res, 400, error.message);

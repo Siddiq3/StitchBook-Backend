@@ -1,4 +1,4 @@
-const secretKeys = /authorization|cookie|password|secret|token|otp|signature|authkey|tokenauth|firebase_uid|google_id/i;
+const secretKeys = /authorization|cookie|password|secret|token|otp|signature|authkey|tokenauth|firebase_uid|google_id|payment_session_id|paymentSessionId/i;
 function redact(value, depth = 0) {
   if (depth > 6) return '[Truncated]';
   if (value instanceof Error) return { name: value.name, code: value.code || 'ERROR' };

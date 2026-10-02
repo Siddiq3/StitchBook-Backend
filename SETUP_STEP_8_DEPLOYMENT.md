@@ -107,10 +107,9 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 JWT_SECRET=your-super-secret-production-key-change-this
 JWT_EXPIRY=7d
 
-# Razorpay (Production keys)
-RAZORPAY_KEY_ID=rzp_live_xxxxx
-RAZORPAY_KEY_SECRET=your_live_key_secret
-RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
+# Cashfree (Production keys)
+CASHFREE_APP_ID=production_example_xxxxx
+CASHFREE_SECRET_KEY=your_live_key_secret
 
 # Firebase
 FIREBASE_API_KEY=prod_firebase_key
@@ -160,9 +159,8 @@ PORT=5000
 DATABASE_URL=postgresql://...
 JWT_SECRET=generate_random_key_here
 JWT_EXPIRY=7d
-RAZORPAY_KEY_ID=rzp_live_xxx
-RAZORPAY_KEY_SECRET=xxx
-RAZORPAY_WEBHOOK_SECRET=xxx
+CASHFREE_APP_ID=production_example_xxx
+CASHFREE_SECRET_KEY=xxx
 FIREBASE_API_KEY=xxx
 LOG_LEVEL=info
 FRONTEND_URL=https://yourdomain.com
@@ -225,8 +223,8 @@ In Railway variables:
 NODE_ENV=production
 DATABASE_URL=get_from_postgresql_service
 JWT_SECRET=generate_random_key
-RAZORPAY_KEY_ID=xxx
-RAZORPAY_KEY_SECRET=xxx
+CASHFREE_APP_ID=xxx
+CASHFREE_SECRET_KEY=xxx
 ...
 ```
 
@@ -322,23 +320,9 @@ For now, Render dashboard is sufficient.
 
 ---
 
-## 🛠 STEP 8: Setup Razorpay Webhooks
+## 🛠 STEP 8: Configure Cashfree
 
-### Update Webhook URL
-
-1. Go to [Razorpay Dashboard](https://dashboard.razorpay.com)
-2. Settings → Webhooks
-3. Add webhook:
-
-```
-URL: https://your-api.onrender.com/api/subscription/webhook
-Events: payment.authorize, payment.failed
-Secret: your_webhook_secret
-```
-
-4. Keep secret in .env: `RAZORPAY_WEBHOOK_SECRET`
-
----
+Follow [Cashfree setup](SETUP_STEP_7_CASHFREE.md), whitelist the website domain, and register `/api/webhooks/cashfree` with raw-body signature verification.
 
 ## 🛠 STEP 9: Update Frontend API URLs
 
@@ -373,7 +357,7 @@ Before Going Live:
   [ ] Custom domain configured
   [ ] Health check working
   [ ] API endpoints tested
-  [ ] Razorpay production keys configured
+  [ ] Cashfree production keys configured
   [ ] Webhooks setup
   [ ] Firebase production keys set
   [ ] Logging enabled
@@ -492,7 +476,7 @@ psql postgresql://user:pass@SERVICE_HOST/dbname < backup.sql
 - ✅ Rate limiting enabled
 - ✅ CORS restricted to frontend origin
 - ✅ Sensitive data logged only in dev
-- ✅ Razorpay keys are production-specific
+- ✅ Cashfree keys are production-specific
 - ✅ Database backups scheduled
 - ✅ Monitor for suspicious activity
 
@@ -517,7 +501,7 @@ Your backend is now:
 1. ✅ Hosted on Render (or Railway)
 2. ✅ Running production PostgreSQL database
 3. ✅ Using SSL/HTTPS
-4. ✅ Connected to Razorpay webhooks
+4. ✅ Connected to Cashfree webhooks
 5. ✅ Monitored and backed up
 6. ✅ Ready for users!
 

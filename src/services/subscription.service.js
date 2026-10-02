@@ -6,7 +6,8 @@
 const SubscriptionModel = require('../models/subscription.model');
 const UserModel = require('../models/user.model');
 const logger = require('../utils/logger');
-const Razorpay = require('razorpay');
+const cashfree = require('./cashfree');
+const db = require('../config/database');
 const crypto = require('crypto');
 const ledger = require('../models/billingLedger');
 const { createRecoverableOrder } = require('./recoverableCheckout');
@@ -14,12 +15,8 @@ const { client: redis, isReady: isRedisReady, keyPrefix } = require('../config/r
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const FREE_TRIAL_DAYS = Math.max(1, Number(process.env.FREE_TRIAL_DAYS || 10));
-const SUBSCRIPTION_CHECKOUT_TTL_SECONDS = 15 * 60;
 const UPGRADE_SESSION_TTL_SECONDS = Math.max(300, Number(process.env.UPGRADE_SESSION_TTL_SECONDS || 7200));
-const checkoutKey = (token) => `${keyPrefix}subscription_checkout:${token}`;
 const upgradeSessionKey = (sessionId) => `${keyPrefix}subscription_upgrade:${sessionId}`;
-const paymentProcessedKey = (paymentId) => `${keyPrefix}subscription_payment_processed:${paymentId}`;
-const PAYMENT_PROCESSED_TTL_SECONDS = 400 * 24 * 60 * 60;
 
 const PLAN_CONFIG = {
   basic: {
@@ -67,47 +64,12 @@ const PLAN_CONFIG = {
 const ACTIVE_PLAN_KEYS = Object.keys(PLAN_CONFIG);
 
 class SubscriptionService {
-  static normalizeRazorpayError(error) {
-    const message = error?.error?.description || error?.message || String(error);
-    const statusCode = Number(error?.statusCode || error?.status || error?.error?.statusCode || 500);
-    const normalized = new Error(message);
-    normalized.statusCode = statusCode;
-    normalized.isRazorpayError = true;
-    return normalized;
-  }
-
-  static getRazorpayClient() {
-    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-      throw new Error('Razorpay keys are not configured');
-    }
-
-    return new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET,
-    });
-  }
-
   static getPlanConfig(billingCycle) {
     const plan = PLAN_CONFIG[billingCycle];
     if (!plan) {
       throw new Error('Invalid subscription plan');
     }
     return plan;
-  }
-
-  static verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature) {
-    const expectedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-      .digest('hex');
-
-    const expectedBuffer = Buffer.from(expectedSignature);
-    const receivedBuffer = Buffer.from(String(razorpaySignature || ''));
-
-    return (
-      expectedBuffer.length === receivedBuffer.length &&
-      crypto.timingSafeEqual(expectedBuffer, receivedBuffer)
-    );
   }
 
   static getActorIds(actor = {}) {
@@ -296,172 +258,57 @@ class SubscriptionService {
       plan: parsed.plan,
       createdAt: parsed.createdAt,
       expiresAt: parsed.expiresAt,
-      razorpayOrderId: parsed.razorpayOrderId,
+      cashfreeOrderId: parsed.cashfreeOrderId,
       amount: parsed.amount,
       currency: parsed.currency,
     };
   }
 
-  static async createUpgradeCheckoutOrder(sessionId) {
+  static async createUpgradeCheckoutOrder(sessionId, customerPhone) {
     const session = await this.validateUpgradeSession(sessionId);
     const planConfig = this.getPlanConfig(session.plan);
-    const razorpay = this.getRazorpayClient();
-    const amountPaise = Math.round(Number(planConfig.amount) * 100);
-
-    if (amountPaise < 100) {
-      throw new Error('Payment amount must be at least ₹1');
-    }
-
-    let order;
-    try {
-      order = await createRecoverableOrder({
-        id: sessionId, userId: session.userId, plan: session.plan, razorpay,
-        amount: amountPaise,
-        receipt: `upgrade_${sessionId}`.slice(0, 40),
-        notes: {
-          stitch_upgrade_session_id: sessionId,
-          stitch_plan: session.plan,
-          stitch_user_id: String(session.userId),
-        },
-      });
-    } catch (error) {
-      throw this.normalizeRazorpayError(error);
-    }
-
-    const updatedSession = {
-      userId: session.userId,
-      plan: session.plan,
-      createdAt: session.createdAt,
-      expiresAt: session.expiresAt,
-      razorpayOrderId: order.id,
-      amount: amountPaise,
-      currency: 'INR',
-    };
-
-    const secondsLeft = Math.max(300, Math.ceil((new Date(session.expiresAt).getTime() - Date.now()) / 1000));
-    await redis.setex(upgradeSessionKey(sessionId), secondsLeft, JSON.stringify(updatedSession));
-
-    return {
-      keyId: process.env.RAZORPAY_KEY_ID,
-      amount: amountPaise,
-      currency: 'INR',
-      orderId: order.id,
-      plan: session.plan,
-      sessionId,
-    };
-  }
-
-  static async verifyUpgradeCheckoutPayment({
-    sessionId,
-    razorpayOrderId,
-    razorpayPaymentId,
-    razorpaySignature,
-  }) {
-    const session = await this.validateUpgradeSession(sessionId);
-
-    if (!session.razorpayOrderId || session.razorpayOrderId !== razorpayOrderId) {
-      throw new Error('Payment verification failed');
-    }
-
-    if (!this.verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
-      throw new Error('Payment verification failed');
-    }
-
-    const payment = await this.getRazorpayClient().payments.fetch(razorpayPaymentId);
-    const expected = Math.round(Number(this.getPlanConfig(session.plan).amount) * 100);
-    if (payment.status !== 'captured' || payment.order_id !== razorpayOrderId || Number(payment.amount) !== expected || payment.currency !== 'INR') throw new Error('Payment is not captured or does not match the order');
-
-    // The plan always comes from the server-side session the order was priced
-    // from, never from the browser.
-    const activation = await this.activatePaidPlan({
-      userId: session.userId,
-      plan: session.plan,
-      razorpayPaymentId,
+    const user = await UserModel.getUserById(session.userId);
+    const order = await createRecoverableOrder({
+      id: sessionId, userId: session.userId, plan: session.plan,
+      amount: Math.round(planConfig.amount * 100), receipt: `upgrade_${sessionId}`,
+      customer: {...user, phone: user.phone || customerPhone},
+      returnUrl: `${this.getUpgradePageBaseUrl()}/upgrade/session/${sessionId}?order_id={order_id}`,
     });
+    const updated = {...session, cashfreeOrderId: order.order_id, amount: planConfig.amount, currency:'INR'};
+    const secondsLeft = Math.max(1, Math.ceil((new Date(session.expiresAt)-Date.now())/1000));
+    await redis.setex(upgradeSessionKey(sessionId), secondsLeft, JSON.stringify(updated));
+    return {orderId:order.order_id, paymentSessionId:order.payment_session_id, mode:cashfree.getMode(), amount:planConfig.amount, currency:'INR', plan:session.plan, sessionId};
+  }
 
-    // Keep session available until normal TTL so verification retries are idempotent.
-    return {
-      ...activation,
-      razorpayPaymentId,
-      razorpayOrderId,
-    };
+  static async verifyUpgradeCheckoutPayment({sessionId, cashfreeOrderId}) {
+    const session = await this.validateUpgradeSession(sessionId);
+    if (!session.cashfreeOrderId || session.cashfreeOrderId !== cashfreeOrderId) throw new Error('Payment verification failed');
+    const payment = await cashfree.verifiedPayment(cashfreeOrderId, this.getPlanConfig(session.plan).amount);
+    const activation = await this.activatePaidPlan({userId:session.userId,plan:session.plan,cashfreePaymentId:String(payment.cf_payment_id)});
+    return {...activation,cashfreeOrderId,cashfreePaymentId:String(payment.cf_payment_id)};
+  }
+
+  static async activatePaidPlan({userId, plan, cashfreePaymentId}) {
+    if (!userId) throw new Error('User is required to activate a subscription');
+    if (!cashfreePaymentId) throw new Error('Payment reference is required to activate a subscription');
+    return ledger.applyPayment({userId,plan,paymentId:`cashfree:${cashfreePaymentId}`,durationDays:this.getPlanConfig(plan).durationDays});
+  }
+
+  // Persisted billing intents bind ownership and price even after Redis expires.
+  static async activateFromWebhookPayment({orderId, paymentId}) {
+    const intent = await db.queryRow('SELECT * FROM billing_intents WHERE provider_order_id=$1 OR receipt=$1', [orderId]);
+    if (!intent || !orderId?.startsWith('upgrade_')) return {ignored:true,reason:'Not a subscription upgrade order'};
+    const amount = this.getPlanConfig(intent.plan).amount;
+    if (Number(intent.amount) !== Math.round(amount*100)) throw new Error('Checkout amount mismatch');
+    const payment = await cashfree.verifiedPayment(orderId, amount);
+    if (String(payment.cf_payment_id) !== String(paymentId)) throw new Error('Payment reference mismatch');
+    return this.activatePaidPlan({userId:intent.user_id,plan:intent.plan,cashfreePaymentId:String(payment.cf_payment_id)});
   }
 
   /**
-   * Activate a paid plan on the users table (the entitlement source of truth).
-   * Each Razorpay payment activates at most once, whether it arrives through
-   * the checkout verify call, a webhook retry, or a replay.
-   */
-  static async activatePaidPlan({ userId, plan, razorpayPaymentId }) {
-    if (!userId) {
-      throw new Error('User is required to activate a subscription');
-    }
-
-    if (!razorpayPaymentId) {
-      throw new Error('Payment reference is required to activate a subscription');
-    }
-
-    const planConfig = this.getPlanConfig(plan);
-
-    return ledger.applyPayment({ userId, plan, paymentId: razorpayPaymentId, durationDays: planConfig.durationDays });
-  }
-
-  /**
-   * Activate from a signature-verified Razorpay webhook payment entity.
-   * Payment notes are supplied by the browser checkout, so user and plan are
-   * read only from the order the server created, and amounts must match.
-   */
-  static async activateFromWebhookPayment(paymentEntity = {}) {
-    const razorpayPaymentId = paymentEntity.id;
-    const razorpayOrderId = paymentEntity.order_id;
-
-    if (!razorpayPaymentId || !razorpayOrderId) {
-      return { ignored: true, reason: 'Payment has no order reference' };
-    }
-
-    const razorpay = this.getRazorpayClient();
-    let order;
-    try {
-      order = await razorpay.orders.fetch(razorpayOrderId);
-    } catch (error) {
-      throw this.normalizeRazorpayError(error);
-    }
-
-    const notes = order?.notes || {};
-    const userId = notes.stitch_user_id;
-    const plan = notes.stitch_plan;
-
-    if (!notes.stitch_upgrade_session_id || !userId || !plan) {
-      return { ignored: true, reason: 'Not a subscription upgrade order' };
-    }
-
-    const planConfig = PLAN_CONFIG[plan];
-    const expectedAmount = planConfig ? Math.round(Number(planConfig.amount) * 100) : NaN;
-    if (
-      !planConfig ||
-      Number(order.amount) !== expectedAmount ||
-      Number(paymentEntity.amount) !== expectedAmount ||
-      order.currency !== 'INR' ||
-      paymentEntity.currency !== 'INR'
-    ) {
-      logger.error(`Razorpay webhook amount/plan mismatch for order ${razorpayOrderId}, payment ${razorpayPaymentId}`);
-      return { ignored: true, reason: 'Payment does not match the subscription plan' };
-    }
-
-    const activation = await this.activatePaidPlan({ userId, plan, razorpayPaymentId });
-    // The durable ledger handles duplicate delivery; keep the session for retries.
-
-    return {
-      ...activation,
-      razorpayPaymentId,
-      razorpayOrderId,
-    };
-  }
-
-  /**
-   * Create a new subscription after Razorpay payment
+   * Create a new subscription after verified payment
    * @param {number} userId - User ID
-   * @param {object} subscriptionData - {plan, razorpay_subscription_id, status, expiry_date}
+   * @param {object} subscriptionData - {plan, provider_subscription_id, status, expiry_date}
    * @returns {object} - Created subscription
    */
   static async createSubscription(userId, subscriptionData) {
@@ -520,33 +367,6 @@ class SubscriptionService {
       return this.normalizeSubscriptionState(user);
     } catch (error) {
       logger.error('Error getting actor subscription:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Verify subscription after Razorpay payment
-   * @param {string} razorpaySubscriptionId - Razorpay subscription ID
-   * @param {object} verificationData - {plan, status, expiry_date}
-   * @returns {object} - Updated subscription
-   */
-  static async verifySubscription(razorpaySubscriptionId, verificationData) {
-    try {
-      const subscription = await SubscriptionModel.getSubscriptionByRazorpayId(razorpaySubscriptionId);
-      
-      if (!subscription) {
-        throw new Error('Subscription not found');
-      }
-
-      const updatedSubscription = await SubscriptionModel.updateSubscription(
-        subscription.id,
-        verificationData
-      );
-
-      logger.info(`Subscription verified for Razorpay ID: ${razorpaySubscriptionId}`);
-      return updatedSubscription;
-    } catch (error) {
-      logger.error('Error verifying subscription:', error.message);
       throw error;
     }
   }
@@ -628,228 +448,6 @@ class SubscriptionService {
     }
   }
 
-  /**
-   * Create Razorpay order
-   * @param {number} shopId - Shop ID
-   * @param {string} billingCycle - plan key
-   * @returns {object} - Razorpay order data
-   */
-  static async createRazorpayOrder(shopId, billingCycle) {
-    try {
-      const plan = this.getPlanConfig(billingCycle);
-      const amount = plan.amount;
-      const amountPaise = Math.round(Number(amount) * 100);
-
-      if (!shopId) {
-        throw new Error('Missing shopId/userId for Razorpay order creation');
-      }
-
-      if (amountPaise < 100) {
-        throw new Error('Payment amount must be at least ₹1');
-      }
-
-      if (!isRedisReady()) {
-        throw new Error('Subscription checkout is temporarily unavailable');
-      }
-
-      const razorpay = this.getRazorpayClient();
-
-      let order;
-      try {
-        order = await razorpay.orders.create({
-          amount: amountPaise,
-          currency: 'INR',
-          receipt: `sub_${shopId}_${Date.now()}`.slice(0, 40),
-          notes: {
-            stitch_subscription: 'true',
-            stitch_shop_id: shopId.toString(),
-            billing_cycle: billingCycle,
-          },
-        });
-      } catch (error) {
-        throw this.normalizeRazorpayError(error);
-      }
-
-      const checkoutToken = crypto.randomBytes(32).toString('hex');
-      const session = {
-        checkoutToken,
-        shopId,
-        billingCycle,
-        planType: plan.planType,
-        amount,
-        currency: 'INR',
-        razorpayOrderId: order.id,
-        createdAt: new Date().toISOString(),
-      };
-
-      await redis.set(checkoutKey(checkoutToken), JSON.stringify(session), 'EX', SUBSCRIPTION_CHECKOUT_TTL_SECONDS);
-
-      logger.info(`Razorpay order created: ${order.id} for shop: ${shopId}`);
-      return {
-        checkoutToken,
-        expiresInSeconds: SUBSCRIPTION_CHECKOUT_TTL_SECONDS,
-        orderId: order.id,
-        amount: order.amount,
-        displayAmount: amount,
-      billingCycle,
-      currency: order.currency,
-      keyId: process.env.RAZORPAY_KEY_ID,
-      planType: plan.planType,
-      staffLimit: plan.staffLimit,
-    };
-    } catch (error) {
-      logger.error('Error creating Razorpay order:', error?.message || error?.error?.description || String(error));
-      throw error;
-    }
-  }
-
-  /**
-   * Verify Razorpay payment and activate subscription
-   * @param {number} shopId - Shop ID
-   * @param {string} razorpayOrderId - Razorpay order ID
-   * @param {string} razorpayPaymentId - Razorpay payment ID
-   * @param {string} razorpaySignature - Razorpay signature
-   * @param {string} billingCycle - plan key
-   * @returns {object} - Updated subscription data
-   */
-  static async verifyRazorpayPayment(shopId, razorpayOrderId, razorpayPaymentId, razorpaySignature, billingCycle, checkoutToken) {
-    try {
-      if (!shopId) {
-        throw new Error('Missing shopId/userId for Razorpay payment verification');
-      }
-
-      const existingPayment = await SubscriptionModel.getSubscriptionByRazorpayPaymentId(razorpayPaymentId);
-      if (existingPayment) {
-        if (String(existingPayment.shop_id) !== String(shopId)) {
-          throw new Error('Payment verification failed');
-        }
-
-        logger.info(`Razorpay payment already verified: ${razorpayPaymentId}`);
-        const existingEndDate = existingPayment.end_date ? new Date(existingPayment.end_date) : null;
-        const daysRemaining = existingEndDate
-          ? Math.ceil((existingEndDate - new Date()) / (1000 * 60 * 60 * 24))
-          : 0;
-
-        return {
-          id: existingPayment.id,
-          shopId: existingPayment.shop_id,
-          planType: existingPayment.plan_type,
-          status: existingPayment.status,
-          startDate: existingPayment.start_date,
-          endDate: existingPayment.end_date,
-          amount: existingPayment.amount,
-          isActive: existingPayment.is_active,
-          razorpayPaymentId,
-          daysRemaining: Math.max(0, daysRemaining),
-        };
-      }
-
-      if (!checkoutToken) {
-        throw new Error('Checkout session is required');
-      }
-
-      if (!isRedisReady()) {
-        throw new Error('Subscription checkout is temporarily unavailable');
-      }
-
-      const sessionKey = checkoutKey(checkoutToken);
-      const rawSession = await redis.get(sessionKey);
-      if (!rawSession) {
-        throw new Error('Subscription checkout session expired or invalid');
-      }
-
-      const session = JSON.parse(rawSession);
-      if (
-        String(session.shopId) !== String(shopId) ||
-        session.razorpayOrderId !== razorpayOrderId ||
-        session.billingCycle !== billingCycle
-      ) {
-        throw new Error('Payment verification failed');
-      }
-
-      if (!this.verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
-        throw new Error('Payment verification failed');
-      }
-
-      const razorpay = this.getRazorpayClient();
-      const [razorpayOrder, razorpayPayment] = await Promise.all([
-        razorpay.orders.fetch(razorpayOrderId),
-        razorpay.payments.fetch(razorpayPaymentId),
-      ]);
-
-      const expectedAmount = Math.round(Number(session.amount) * 100);
-      const orderNotes = razorpayOrder?.notes || {};
-      if (
-        String(razorpayOrder?.id) !== razorpayOrderId ||
-        Number(razorpayOrder?.amount) !== expectedAmount ||
-        razorpayOrder?.currency !== session.currency ||
-        String(orderNotes.stitch_shop_id || '') !== String(shopId) ||
-        orderNotes.billing_cycle !== billingCycle
-      ) {
-        throw new Error('Payment verification failed');
-      }
-
-      if (
-        String(razorpayPayment?.order_id) !== razorpayOrderId ||
-        Number(razorpayPayment?.amount) !== expectedAmount ||
-        razorpayPayment?.currency !== session.currency ||
-        razorpayPayment?.status !== 'captured'
-      ) {
-        throw new Error('Payment is not captured yet');
-      }
-
-      const planType = session.planType;
-      const amount = session.amount;
-
-      // Calculate dates
-      const startDate = new Date();
-      const endDate = new Date(startDate);
-      const planConfig = this.getPlanConfig(billingCycle);
-      if (planConfig.duration === 'year') {
-        endDate.setFullYear(endDate.getFullYear() + 1);
-      } else {
-        endDate.setMonth(endDate.getMonth() + 1);
-      }
-
-      // 3. Upsert subscription
-      const subscriptionData = {
-        shop_id: shopId,
-        plan_type: planType,
-        status: 'active',
-        start_date: startDate.toISOString().split('T')[0],
-        end_date: endDate.toISOString().split('T')[0],
-        amount: amount,
-        razorpay_payment_id: razorpayPaymentId,
-        razorpay_order_id: razorpayOrderId,
-        is_active: true,
-      };
-
-      const subscription = await SubscriptionModel.createSubscription(subscriptionData);
-      await redis.del(sessionKey);
-
-      // Calculate days remaining
-      const today = new Date();
-      const daysRemaining = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
-
-      logger.info(`Payment verified and subscription activated: ${subscription.id} for shop: ${shopId}`);
-
-      return {
-        id: subscription.id,
-        shopId: shopId,
-        planType: planType,
-        status: 'active',
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        amount: amount,
-        isActive: true,
-        razorpayPaymentId: razorpayPaymentId,
-        daysRemaining: daysRemaining,
-      };
-    } catch (error) {
-      logger.error('Error verifying Razorpay payment:', error.message);
-      throw error;
-    }
-  }
 }
 
 module.exports = SubscriptionService;

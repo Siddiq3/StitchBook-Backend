@@ -147,13 +147,13 @@ COMMENT ON COLUMN orders.delivery_date IS 'Expected delivery date for the order'
 -- ============================================================================
 -- 6. SUBSCRIPTIONS TABLE - User subscription info
 -- ============================================================================
--- Tracks subscription plans and Razorpay payment details
+-- Tracks subscription plans and Payment provider payment details
 
 CREATE TABLE subscriptions (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL,
   plan VARCHAR(50) NOT NULL,
-  razorpay_subscription_id VARCHAR(255) UNIQUE,
+  provider_subscription_id VARCHAR(255) UNIQUE,
   status subscription_status DEFAULT 'active',
   expiry_date DATE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -163,8 +163,8 @@ CREATE TABLE subscriptions (
     REFERENCES users(id) ON DELETE CASCADE
 );
 
-COMMENT ON TABLE subscriptions IS 'Stores subscription info linked with Razorpay';
-COMMENT ON COLUMN subscriptions.razorpay_subscription_id IS 'Razorpay subscription ID for payment tracking';
+COMMENT ON TABLE subscriptions IS 'Stores subscription info linked with Payment provider';
+COMMENT ON COLUMN subscriptions.provider_subscription_id IS 'Payment provider subscription ID for payment tracking';
 
 -- ============================================================================
 -- CREATE INDEXES FOR PERFORMANCE
@@ -179,7 +179,7 @@ CREATE INDEX idx_orders_shop_id ON orders(shop_id);
 CREATE INDEX idx_orders_customer_id ON orders(customer_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
-CREATE INDEX idx_subscriptions_razorpay_id ON subscriptions(razorpay_subscription_id);
+CREATE INDEX idx_subscriptions_provider_id ON subscriptions(provider_subscription_id);
 
 -- ============================================================================
 -- VERIFICATION QUERIES - Run these to verify setup
@@ -229,3 +229,10 @@ CREATE INDEX idx_subscriptions_razorpay_id ON subscriptions(razorpay_subscriptio
 -- All sensitive operations are indexed for performance
 -- 
 -- ============================================================================
+
+-- Durable customer checkout ownership for Cashfree webhook recovery.
+CREATE TABLE IF NOT EXISTS customer_payment_checkouts (
+  provider_order_id TEXT PRIMARY KEY,
+  session JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

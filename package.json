@@ -10,7 +10,8 @@
     "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
     "lint": "eslint src tests scripts",
     "migrate:hardening": "node scripts/migrate-hardening.js",
-    "migrate:password-auth": "node scripts/migrate-password-auth.js"
+    "migrate:password-auth": "node scripts/migrate-password-auth.js",
+    "migrate:cashfree": "node scripts/migrate-cashfree.js"
   },
   "keywords": [
     "tailor",
@@ -38,7 +39,6 @@
     "multer": "^2.3.0",
     "pg": "^8.11.3",
     "rate-limit-redis": "^4.1.5",
-    "razorpay": "^2.9.6",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^11.1.1"

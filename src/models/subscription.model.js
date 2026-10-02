@@ -16,13 +16,13 @@ class SubscriptionModel {
   static async createSubscription(subscriptionData) {
     const {
       user_id, shop_id, plan_type, status, start_date, end_date, amount,
-      razorpay_payment_id, razorpay_order_id, is_active
+      provider_payment_id, provider_order_id, is_active
     } = subscriptionData;
 
     const query = `
       INSERT INTO subscriptions (
         user_id, shop_id, plan_type, status, start_date, end_date, amount,
-        razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at
+        provider_payment_id, provider_order_id, is_active, created_at, updated_at
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
       ON CONFLICT (shop_id)
@@ -32,17 +32,17 @@ class SubscriptionModel {
         start_date = excluded.start_date,
         end_date = excluded.end_date,
         amount = excluded.amount,
-        razorpay_payment_id = excluded.razorpay_payment_id,
-        razorpay_order_id = excluded.razorpay_order_id,
+        provider_payment_id = excluded.provider_payment_id,
+        provider_order_id = excluded.provider_order_id,
         is_active = excluded.is_active,
         updated_at = NOW()
       RETURNING id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-                razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at;
+                provider_payment_id, provider_order_id, is_active, created_at, updated_at;
     `;
 
     return db.queryRow(query, [
       user_id, shop_id, plan_type, status, start_date, end_date, amount,
-      razorpay_payment_id, razorpay_order_id, is_active
+      provider_payment_id, provider_order_id, is_active
     ]);
   }
 
@@ -54,7 +54,7 @@ class SubscriptionModel {
   static async getSubscriptionById(subscriptionId) {
     const query = `
       SELECT id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-             razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at
+             provider_payment_id, provider_order_id, is_active, created_at, updated_at
       FROM subscriptions
       WHERE id = $1;
     `;
@@ -70,7 +70,7 @@ class SubscriptionModel {
   static async getSubscriptionByUserId(userId) {
     const query = `
       SELECT id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-             razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at
+             provider_payment_id, provider_order_id, is_active, created_at, updated_at
       FROM subscriptions
       WHERE user_id = $1
       ORDER BY created_at DESC
@@ -203,20 +203,20 @@ class SubscriptionModel {
       SET status = $1, updated_at = NOW()
       WHERE id = $2
       RETURNING id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-                razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at;
+                provider_payment_id, provider_order_id, is_active, created_at, updated_at;
     `;
 
     return db.queryRow(query, [status, subscriptionId]);
   }
 
   /**
-   * Update subscription after Razorpay verification
+   * Update subscription after payment verification
    * @param {number} subscriptionId - Subscription ID
    * @param {object} updateData - Data to update
    * @returns {object} - Updated subscription
    */
   static async updateSubscription(subscriptionId, updateData) {
-    const allowedFields = ['plan_type', 'status', 'start_date', 'end_date', 'amount', 'razorpay_payment_id', 'razorpay_order_id', 'is_active'];
+    const allowedFields = ['plan_type', 'status', 'start_date', 'end_date', 'amount', 'provider_payment_id', 'provider_order_id', 'is_active'];
     const updates = [];
     const values = [];
     let paramCount = 1;
@@ -241,7 +241,7 @@ class SubscriptionModel {
       SET ${updates.join(', ')}
       WHERE id = $${paramCount}
       RETURNING id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-                razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at;
+                provider_payment_id, provider_order_id, is_active, created_at, updated_at;
     `;
 
     return db.queryRow(query, values);
@@ -280,39 +280,6 @@ class SubscriptionModel {
   }
 
   /**
-   * Get subscription by Razorpay ID
-   * @param {string} razorpaySubscriptionId - Razorpay subscription ID
-   * @returns {object} - Subscription data
-   */
-  static async getSubscriptionByRazorpayId(razorpaySubscriptionId) {
-    const query = `
-      SELECT id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-             razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at
-      FROM subscriptions
-      WHERE razorpay_subscription_id = $1;
-    `;
-
-    return db.queryRow(query, [razorpaySubscriptionId]);
-  }
-
-  /**
-   * Get subscription by Razorpay payment ID
-   * @param {string} razorpayPaymentId - Razorpay payment ID
-   * @returns {object} - Subscription data
-   */
-  static async getSubscriptionByRazorpayPaymentId(razorpayPaymentId) {
-    const query = `
-      SELECT id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-             razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at
-      FROM subscriptions
-      WHERE razorpay_payment_id = $1
-      LIMIT 1;
-    `;
-
-    return db.queryRow(query, [razorpayPaymentId]);
-  }
-
-  /**
    * Get subscription by shop ID
    * @param {number} shopId - Shop ID
    * @returns {object} - Subscription data
@@ -320,7 +287,7 @@ class SubscriptionModel {
   static async getSubscriptionByShopId(shopId) {
     const query = `
       SELECT id, user_id, shop_id, plan_type, status, start_date, end_date, amount,
-             razorpay_payment_id, razorpay_order_id, is_active, created_at, updated_at
+             provider_payment_id, provider_order_id, is_active, created_at, updated_at
       FROM subscriptions
       WHERE shop_id = $1
       ORDER BY created_at DESC
