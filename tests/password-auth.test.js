@@ -57,8 +57,9 @@ test('password login accepts email or normalized mobile and keeps invalid creden
   await assert.rejects(()=>AuthService.loginWithPassword('owner@example.com','wrong'),error=>error.code==='INVALID_CREDENTIALS'&&error.message==='Invalid email/mobile number or password');
 });
 
-test('legacy signed-in account can set its first password; later changes require current password',async t=>{
+test('legacy signed-in account can set its first password; later changes require current password and revoke other sessions',async t=>{
   let savedHash=null;
+  const revoked=[];
   t.mock.method(UserModel,'getPasswordHash',async()=>savedHash);
   t.mock.method(UserModel,'setPasswordHash',async(_id,hash)=>{
     savedHash=hash;
@@ -66,11 +67,18 @@ test('legacy signed-in account can set its first password; later changes require
   });
   t.mock.method(ShopModel,'getShopByUserId',async()=>null);
   t.mock.method(StaffModel,'getStaffByUserId',async()=>null);
+  t.mock.method(SessionService,'listSessionsForUser',async()=>[
+    {sessionId:'current'},
+    {sessionId:'other-1'},
+    {sessionId:'other-2'},
+  ]);
+  t.mock.method(SessionService,'revokeSession',async id=>{revoked.push(id);});
 
-  await AuthService.setOrChangePassword(11,{newPassword:'first123'});
+  await AuthService.setOrChangePassword(11,{newPassword:'first123'},'current');
   assert.equal(await bcrypt.compare('first123',savedHash),true);
+  assert.deepEqual(revoked,['other-1','other-2']);
 
-  await assert.rejects(()=>AuthService.setOrChangePassword(11,{currentPassword:'wrong',newPassword:'second123'}),error=>error.code==='INVALID_CURRENT_PASSWORD');
-  await AuthService.setOrChangePassword(11,{currentPassword:'first123',newPassword:'second123'});
+  await assert.rejects(()=>AuthService.setOrChangePassword(11,{currentPassword:'wrong',newPassword:'second123'},'current'),error=>error.code==='INVALID_CURRENT_PASSWORD');
+  await AuthService.setOrChangePassword(11,{currentPassword:'first123',newPassword:'second123'},'current');
   assert.equal(await bcrypt.compare('second123',savedHash),true);
 });
