@@ -31,6 +31,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Parse authentication changes
+        run: |
+          node --check src/services/auth.service.js
+          node --check src/controllers/auth.controller.js
+          node --check src/routes/auth.routes.js
+          node --check src/models/user.model.js
+          node --check tests/password-auth.test.js
       - run: npm ci
       - run: npm run lint
       - run: npm run test:coverage
