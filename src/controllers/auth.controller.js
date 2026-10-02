@@ -18,6 +18,43 @@ const getAuthMeta = (req) => ({
   platform: req.body.platform || null,
 });
 
+exports.register = async (req, res) => {
+  try {
+    const { name, email, phone, password } = req.body;
+    const result = await AuthService.registerWithPassword({ name, email, phone, password }, getAuthMeta(req));
+    logger.info(`✓ Password account created. User: ${result.user.id}`);
+    responder.success(res, 201, 'Account created successfully', result);
+  } catch (error) {
+    logger.warn('Password registration failed:', error.message);
+    const status = error.code === 'ACCOUNT_ALREADY_EXISTS' ? 409 : 400;
+    responder.error(res, status, error.code === 'ACCOUNT_ALREADY_EXISTS' ? 'An account already exists with this email or mobile number' : error.message);
+  }
+};
+
+exports.passwordLogin = async (req, res) => {
+  try {
+    const { identifier, password } = req.body;
+    const result = await AuthService.loginWithPassword(identifier, password, getAuthMeta(req));
+    logger.info(`✓ Password login successful. User: ${result.user.id}`);
+    responder.success(res, 200, 'Login successful', result);
+  } catch (error) {
+    logger.warn('Password login failed');
+    const status = error.code === 'INVALID_CREDENTIALS' ? 401 : 400;
+    responder.error(res, status, error.code === 'INVALID_CREDENTIALS' ? 'Invalid email/mobile number or password' : error.message);
+  }
+};
+
+exports.setPassword = async (req, res) => {
+  try {
+    const result = await AuthService.setOrChangePassword(req.user.userId, req.body || {});
+    responder.success(res, 200, 'Password updated successfully', result);
+  } catch (error) {
+    logger.warn('Password update failed:', error.message);
+    const status = ['INVALID_CURRENT_PASSWORD', 'PASSWORD_REUSED'].includes(error.code) ? 400 : 400;
+    responder.error(res, status, error.message);
+  }
+};
+
 /**
  * POST /api/auth/google
  * Google Sign-In login.
