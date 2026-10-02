@@ -46,7 +46,7 @@ exports.passwordLogin = async (req, res) => {
 
 exports.setPassword = async (req, res) => {
   try {
-    const result = await AuthService.setOrChangePassword(req.user.userId, req.body || {});
+    const result = await AuthService.setOrChangePassword(req.user.userId, req.body || {}, req.user.sessionId || null);
     responder.success(res, 200, 'Password updated successfully', result);
   } catch (error) {
     logger.warn('Password update failed:', error.message);
