@@ -393,7 +393,11 @@ class AuthService {
       throw new Error('User not found');
     }
 
+    const passwordHash = await UserModel.getPasswordHash(userId);
     return {
+      password: {
+        linked: Boolean(passwordHash),
+      },
       google: {
         linked: Boolean(user.google_id),
         email: user.email || null,
