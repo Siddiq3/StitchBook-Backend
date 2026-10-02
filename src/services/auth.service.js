@@ -23,6 +23,7 @@ const GoogleAuthService = require('./googleAuth.service');
 const Msg91WidgetService = require('./msg91Widget.service');
 const TokenService = require('./token.service');
 const SessionService = require('./session.service');
+const PasswordResetService = require('./passwordReset.service');
 const TokenBlacklistService = require('./tokenBlacklist.service');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
@@ -300,6 +301,56 @@ class AuthService {
     }
 
     return { user: await formatUser(user), passwordEnabled: true };
+  }
+
+  static async requestPasswordReset(email) {
+    const cleanEmail = normalizeEmail(email);
+    if (!EMAIL_RE.test(cleanEmail) || cleanEmail.length > 254) {
+      const error = new Error('Enter a valid email address');
+      error.code = 'INVALID_EMAIL';
+      throw error;
+    }
+
+    const user = await UserModel.getUserByEmail(cleanEmail);
+    if (user) {
+      await PasswordResetService.issueOtp({
+        email: cleanEmail,
+        name: user.name,
+      });
+    }
+
+    // Deliberately generic so callers cannot discover registered emails.
+    return { requested: true };
+  }
+
+  static async resetPasswordWithOtp({ email, otp, newPassword }) {
+    const cleanEmail = normalizeEmail(email);
+    if (!EMAIL_RE.test(cleanEmail) || cleanEmail.length > 254) {
+      const error = new Error('Invalid or expired verification code');
+      error.code = 'INVALID_RESET_OTP';
+      throw error;
+    }
+    if (!/^\d{6}$/.test(String(otp || '').trim())) {
+      const error = new Error('Invalid or expired verification code');
+      error.code = 'INVALID_RESET_OTP';
+      throw error;
+    }
+
+    const password = validateNewPassword(newPassword);
+    await PasswordResetService.verifyAndConsumeOtp(cleanEmail, String(otp).trim());
+
+    const user = await UserModel.getUserByEmail(cleanEmail);
+    if (!user) {
+      const error = new Error('Invalid or expired verification code');
+      error.code = 'INVALID_RESET_OTP';
+      throw error;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    await UserModel.setPasswordHash(user.id, passwordHash);
+    await SessionService.revokeAllSessionsForUser(user.id);
+
+    return { success: true };
   }
 
   static async loginWithGoogleToken(idToken, meta = {}) {

@@ -44,6 +44,37 @@ exports.passwordLogin = async (req, res) => {
   }
 };
 
+exports.requestPasswordReset = async (req, res) => {
+  const genericMessage = 'If an account exists for that email, a verification code has been sent';
+  try {
+    await AuthService.requestPasswordReset(req.body?.email);
+    responder.success(res, 200, genericMessage, { requested: true });
+  } catch (error) {
+    if (error.code === 'INVALID_EMAIL') {
+      return responder.error(res, 400, 'Enter a valid email address');
+    }
+    logger.error('Password reset email request failed:', error.code || error.message);
+    // Keep the public response generic so account existence and provider failures are not exposed.
+    responder.success(res, 200, genericMessage, { requested: true });
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  try {
+    await AuthService.resetPasswordWithOtp(req.body || {});
+    responder.success(res, 200, 'Password reset successfully. Please sign in again.', { reset: true });
+  } catch (error) {
+    logger.warn('Password reset failed:', error.code || error.message);
+    if (error.code === 'PASSWORD_RESET_UNAVAILABLE') {
+      return responder.error(res, 503, 'Password reset is temporarily unavailable. Please try again.');
+    }
+    if (error.code === 'INVALID_PASSWORD') {
+      return responder.error(res, 400, error.message);
+    }
+    responder.error(res, 400, 'Invalid or expired verification code');
+  }
+};
+
 exports.setPassword = async (req, res) => {
   try {
     const result = await AuthService.setOrChangePassword(req.user.userId, req.body || {}, req.user.sessionId || null);
