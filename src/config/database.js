@@ -5,20 +5,14 @@
 
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
-const { DATABASE_URL, NODE_ENV } = require('./env');
-
-const sslConfig = NODE_ENV === 'production'
-  ? { rejectUnauthorized: true }
-  : process.env.PGSSLMODE === 'require'
-    ? { rejectUnauthorized: true }
-    : false;
+require('./env');
+const { databaseTlsConfig } = require('./databaseTls');
 
 const pool = new Pool({
-  connectionString: DATABASE_URL,
+  ...databaseTlsConfig(),
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
-  ssl: sslConfig,
 });
 
 // Test connection

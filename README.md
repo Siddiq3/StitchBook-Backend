@@ -149,6 +149,26 @@ CASHFREE_APP_ID=your_cashfree_key_id
 CASHFREE_SECRET_KEY=your_cashfree_key_secret
 ```
 
+#### Render startup troubleshooting
+
+If startup exits with `SELF_SIGNED_CERT_IN_CHAIN`, the database certificate chain
+is not trusted by Node. Download the root CA certificate for the database from
+your provider (Supabase: Database Settings), upload it to Render as a Secret File
+named `database-ca.pem`, and set
+`DATABASE_SSL_CA_FILE=/etc/secrets/database-ca.pem`. Alternatively, set
+`DATABASE_SSL_CA` to the PEM contents; escaped `\n` newlines are supported.
+Configure only one of these variables. With a custom CA, `sslmode` and `ssl` URL
+parameters are removed so they cannot override verification; remove `sslcert`,
+`sslkey`, and `sslrootcert` parameters from `DATABASE_URL` yourself.
+Redeploy after updating the configuration. TLS certificate verification remains
+enabled; do not use `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+
+`getaddrinfo ENOTFOUND` for Redis means its hostname could not be resolved.
+Check that the Upstash database still exists and replace Render's `REDIS_URL`
+with the current Redis connection URL from that database's dashboard:
+`rediss://default:<password>@<current-host>:6379`. Use the Redis endpoint,
+not the HTTPS REST endpoint. Redis must be available for sessions and readiness.
+
 #### Setup PostgreSQL Database
 
 1. **Using psql:**
