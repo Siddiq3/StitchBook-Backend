@@ -12,15 +12,15 @@ const { requirePermission } = require('../middleware/permissions');
 const router = express.Router();
 
 // Public checkout routes use a short-lived checkout token, not the user's access token
-router.get('/checkout-session/:checkoutToken', paymentController.getRazorpayCheckoutSession);
-router.post('/razorpay/verify-payment', paymentController.verifyRazorpayOrderPayment);
+router.get('/checkout-session/:checkoutToken', paymentController.getCashfreeCheckoutSession);
+router.post('/cashfree/confirm-payment', paymentController.confirmCashfreeOrderPayment);
 
 // Protected payment routes require authentication
 router.use(authMiddleware);
 router.use(subscriptionGate);
 
-// POST /payment/razorpay/create-order - Create secure Razorpay checkout session for an order
-router.post('/razorpay/create-order', requirePermission('payments:write'), paymentController.createRazorpayOrderPayment);
+// POST /payment/cashfree/create-order - Create secure Cashfree checkout session for an order
+router.post('/cashfree/create-order', requirePermission('payments:write'), paymentController.createCashfreeOrderPayment);
 
 // POST /payment - Record a new payment
 router.post('/', requirePermission('payments:write'), paymentController.createPayment);
