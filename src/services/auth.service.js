@@ -266,7 +266,7 @@ class AuthService {
     return createLoginResponse(updated, meta);
   }
 
-  static async setOrChangePassword(userId, { currentPassword, newPassword }) {
+  static async setOrChangePassword(userId, { currentPassword, newPassword }, currentSessionId = null) {
     const password = validateNewPassword(newPassword);
     const existingHash = await UserModel.getPasswordHash(userId);
     if (existingHash) {
@@ -286,6 +286,19 @@ class AuthService {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await UserModel.setPasswordHash(userId, passwordHash);
+
+    // Credential changes revoke every other trusted device, while keeping the
+    // current authenticated session alive so the user is not unexpectedly
+    // signed out of the device that performed the change.
+    if (currentSessionId) {
+      const sessions = await SessionService.listSessionsForUser(userId);
+      await Promise.all(
+        sessions
+          .filter((session) => session.sessionId !== currentSessionId)
+          .map((session) => SessionService.revokeSession(session.sessionId))
+      );
+    }
+
     return { user: await formatUser(user), passwordEnabled: true };
   }
 
