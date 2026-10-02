@@ -206,10 +206,7 @@ const mergeAuthProvider = (currentProvider, providerToAdd) => {
 class AuthService {
   static async registerWithPassword(payload, meta = {}) {
     const clean = validateRegistration(payload);
-    await Promise.all([
-      assertStaffEmailCanLogin(clean.email),
-      assertStaffPhoneCanLogin(clean.phone),
-    ]);
+    await assertStaffEmailCanLogin(clean.email);
 
     const [emailOwner, phoneOwner] = await Promise.all([
       UserModel.getUserByEmail(clean.email),
@@ -260,10 +257,7 @@ class AuthService {
       throw error;
     }
 
-    await Promise.all([
-      assertStaffEmailCanLogin(user.email),
-      assertStaffPhoneCanLogin(user.phone),
-    ]);
+    await assertStaffEmailCanLogin(user.email);
 
     const updated = await UserModel.updateUser(user.id, {
       last_login: new Date(),
