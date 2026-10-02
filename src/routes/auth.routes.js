@@ -1,6 +1,6 @@
 /**
  * Authentication Routes
- * Production-ready routes for Google and mobile authentication
+ * Password-first authentication with legacy provider routes retained for migration compatibility
  */
 
 const express = require('express');
@@ -12,12 +12,10 @@ const router = express.Router();
 router.use(require('../middleware/webSession').webSession);
 
 // ============================================================================
-// PUBLIC ROUTES
+// PUBLIC ROUTES (No authentication required)
 // ============================================================================
 router.post('/register', loginLimiter, authController.register);
 router.post('/login', loginLimiter, authController.passwordLogin);
- (No authentication required)
-// ============================================================================
 
 /**
  * POST /api/auth/google
