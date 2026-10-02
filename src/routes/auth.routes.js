@@ -1,6 +1,6 @@
 /**
  * Authentication Routes
- * Production-ready routes for Google and mobile authentication
+ * Password-first authentication with legacy provider routes retained for migration compatibility
  */
 
 const express = require('express');
@@ -14,6 +14,8 @@ router.use(require('../middleware/webSession').webSession);
 // ============================================================================
 // PUBLIC ROUTES (No authentication required)
 // ============================================================================
+router.post('/register', loginLimiter, authController.register);
+router.post('/login', loginLimiter, authController.passwordLogin);
 
 /**
  * POST /api/auth/google
@@ -44,11 +46,10 @@ router.post('/msg91-mobile/send-otp', otpLimiter, authController.msg91MobileSend
 router.post('/msg91-mobile/verify-otp', otpLimiter, loginLimiter, authController.msg91MobileVerifyOtp);
 
 /**
- * POST /api/auth/login
- * Legacy Firebase OTP Login
- * Body: { firebaseToken: "ID_TOKEN" }
+ * POST /api/auth/firebase
+ * Legacy Firebase OTP login retained temporarily for account migration compatibility.
  */
-router.post('/login', otpLimiter, loginLimiter, authController.login);
+router.post('/firebase', otpLimiter, loginLimiter, authController.login);
 
 /**
  * POST /api/auth/verify-token
@@ -88,6 +89,9 @@ router.put('/profile', authMiddleware, authController.updateProfile);
  * List linked login methods for the current user.
  */
 router.get('/methods', authMiddleware, authController.getAuthMethods);
+
+/** Set an initial password for legacy accounts, or change an existing password. */
+router.post('/password', authMiddleware, loginLimiter, authController.setPassword);
 
 /**
  * POST /api/auth/link/google

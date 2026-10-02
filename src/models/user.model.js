@@ -318,6 +318,67 @@ class UserModel {
     }
   }
 
+  static async createPasswordUser({ name, email, phone, passwordHash }) {
+    try {
+      const query = `
+        INSERT INTO users (
+          phone, email, name, password_hash, auth_provider,
+          trial_start_at, trial_ends_at, subscription_status,
+          last_login, created_at, updated_at
+        )
+        VALUES ($1, LOWER($2), $3, $4, 'password', NOW(), NOW() + INTERVAL '10 days', 'trial', NOW(), NOW(), NOW())
+        RETURNING id, phone, email, name, avatar, auth_provider, shop_id,
+          trial_start_at, trial_ends_at, plan, subscription_status,
+          subscription_start_at, subscription_ends_at, last_login, created_at, updated_at;
+      `;
+      return await db.queryRow(query, [phone, email, name, passwordHash]);
+    } catch (error) {
+      if (error.code === '23505') {
+        const duplicate = new Error('An account already exists with this email or mobile number');
+        duplicate.code = 'ACCOUNT_ALREADY_EXISTS';
+        throw duplicate;
+      }
+      throw error;
+    }
+  }
+
+  static async getUserForPasswordLogin(identifier) {
+    const isEmail = String(identifier || '').includes('@');
+    const query = isEmail
+      ? `SELECT id, phone, email, name, firebase_uid, google_id, avatar, auth_provider, shop_id,
+           password_hash, trial_start_at, trial_ends_at, plan, subscription_status,
+           subscription_start_at, subscription_ends_at, last_login, created_at, updated_at
+         FROM users WHERE LOWER(email)=LOWER($1) LIMIT 1`
+      : `SELECT id, phone, email, name, firebase_uid, google_id, avatar, auth_provider, shop_id,
+           password_hash, trial_start_at, trial_ends_at, plan, subscription_status,
+           subscription_start_at, subscription_ends_at, last_login, created_at, updated_at
+         FROM users WHERE phone=$1 LIMIT 1`;
+    return db.queryRow(query, [identifier]);
+  }
+
+  static async getPasswordHash(userId) {
+    const row = await db.queryRow('SELECT password_hash FROM users WHERE id=$1', [userId]);
+    return row?.password_hash || null;
+  }
+
+  static async setPasswordHash(userId, passwordHash) {
+    const query = `
+      UPDATE users
+      SET password_hash=$2,
+          auth_provider=CASE
+            WHEN auth_provider IS NULL OR auth_provider='' THEN 'password'
+            WHEN auth_provider LIKE '%password%' THEN auth_provider
+            ELSE auth_provider || '_password'
+          END,
+          updated_at=NOW()
+      WHERE id=$1
+      RETURNING id, phone, email, name, avatar, auth_provider, shop_id,
+        trial_start_at, trial_ends_at, plan, subscription_status,
+        subscription_start_at, subscription_ends_at, last_login, created_at, updated_at;
+    `;
+    return db.queryRow(query, [userId, passwordHash]);
+  }
+
   /**
    * Delete user
    * @param {number} userId - User ID
