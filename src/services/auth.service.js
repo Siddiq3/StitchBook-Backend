@@ -25,9 +25,44 @@ const TokenService = require('./token.service');
 const SessionService = require('./session.service');
 const TokenBlacklistService = require('./tokenBlacklist.service');
 const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcryptjs');
 const phoneUtils = require('../utils/phoneUtils');
 const logger = require('../utils/logger');
 const { mergePermissions } = require('./permissions.service');
+
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('stitchbook-invalid-password', 12);
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+const validateNewPassword = (password) => {
+  const value = String(password || '');
+  if (value.length < 8 || value.length > 128 || !/[A-Za-z]/.test(value) || !/\d/.test(value)) {
+    const error = new Error('Password must be 8-128 characters and include a letter and a number');
+    error.code = 'INVALID_PASSWORD';
+    throw error;
+  }
+  return value;
+};
+const validateRegistration = ({ name, email, phone, password }) => {
+  const cleanName = String(name || '').trim();
+  const cleanEmail = normalizeEmail(email);
+  if (cleanName.length < 2 || cleanName.length > 80) {
+    const error = new Error('Enter your name');
+    error.code = 'INVALID_NAME';
+    throw error;
+  }
+  if (!EMAIL_RE.test(cleanEmail) || cleanEmail.length > 254) {
+    const error = new Error('Enter a valid email address');
+    error.code = 'INVALID_EMAIL';
+    throw error;
+  }
+  return {
+    name: cleanName,
+    email: cleanEmail,
+    phone: phoneUtils.normalizePhone(phone),
+    password: validateNewPassword(password),
+  };
+};
 
 const isStaffMobileLoginEnabled = () =>
   String(process.env.ENABLE_STAFF_MOBILE_LOGIN || '').toLowerCase() === 'true';
@@ -169,6 +204,97 @@ const mergeAuthProvider = (currentProvider, providerToAdd) => {
 };
 
 class AuthService {
+  static async registerWithPassword(payload, meta = {}) {
+    const clean = validateRegistration(payload);
+    await Promise.all([
+      assertStaffEmailCanLogin(clean.email),
+      assertStaffPhoneCanLogin(clean.phone),
+    ]);
+
+    const [emailOwner, phoneOwner] = await Promise.all([
+      UserModel.getUserByEmail(clean.email),
+      UserModel.getUserByPhone(clean.phone),
+    ]);
+    if (emailOwner || phoneOwner) {
+      const error = new Error('An account already exists with this email or mobile number');
+      error.code = 'ACCOUNT_ALREADY_EXISTS';
+      throw error;
+    }
+
+    const passwordHash = await bcrypt.hash(clean.password, 12);
+    let user = await UserModel.createPasswordUser({
+      name: clean.name,
+      email: clean.email,
+      phone: clean.phone,
+      passwordHash,
+    });
+
+    user = await linkStaffEmailIfAllowed(user);
+    user = await linkStaffAccountIfAllowed(user);
+    return createLoginResponse(user, meta);
+  }
+
+  static async loginWithPassword(identifier, password, meta = {}) {
+    const rawIdentifier = String(identifier || '').trim();
+    const rawPassword = String(password || '');
+    if (!rawIdentifier || !rawPassword || rawPassword.length > 128) {
+      const error = new Error('Invalid email/mobile number or password');
+      error.code = 'INVALID_CREDENTIALS';
+      throw error;
+    }
+
+    let normalizedIdentifier;
+    try {
+      normalizedIdentifier = rawIdentifier.includes('@')
+        ? normalizeEmail(rawIdentifier)
+        : phoneUtils.normalizePhone(rawIdentifier);
+    } catch {
+      normalizedIdentifier = rawIdentifier;
+    }
+
+    const user = await UserModel.getUserForPasswordLogin(normalizedIdentifier);
+    const matches = await bcrypt.compare(rawPassword, user?.password_hash || DUMMY_PASSWORD_HASH);
+    if (!user || !user.password_hash || !matches) {
+      const error = new Error('Invalid email/mobile number or password');
+      error.code = 'INVALID_CREDENTIALS';
+      throw error;
+    }
+
+    await Promise.all([
+      assertStaffEmailCanLogin(user.email),
+      assertStaffPhoneCanLogin(user.phone),
+    ]);
+
+    const updated = await UserModel.updateUser(user.id, {
+      last_login: new Date(),
+      auth_provider: user.auth_provider || 'password',
+    });
+    return createLoginResponse(updated, meta);
+  }
+
+  static async setOrChangePassword(userId, { currentPassword, newPassword }) {
+    const password = validateNewPassword(newPassword);
+    const existingHash = await UserModel.getPasswordHash(userId);
+    if (existingHash) {
+      const validCurrent = await bcrypt.compare(String(currentPassword || ''), existingHash);
+      if (!validCurrent) {
+        const error = new Error('Current password is incorrect');
+        error.code = 'INVALID_CURRENT_PASSWORD';
+        throw error;
+      }
+      const samePassword = await bcrypt.compare(password, existingHash);
+      if (samePassword) {
+        const error = new Error('Choose a different password');
+        error.code = 'PASSWORD_REUSED';
+        throw error;
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await UserModel.setPasswordHash(userId, passwordHash);
+    return { user: await formatUser(user), passwordEnabled: true };
+  }
+
   static async loginWithGoogleToken(idToken, meta = {}) {
     try {
       logger.info('Starting Google authentication');
