@@ -70,7 +70,7 @@ class MeasurementModel {
    * @param {number} customerId - Customer ID
    * @returns {array} - Array of measurement records
    */
-  static async getMeasurementsByCustomer(customerId, outfitType = null) {
+  static async getMeasurementsByCustomer(customerId, outfitType = null, limit = 20, offset = 0) {
     let query = `
       SELECT id, customer_id, measurements_data, outfit_type, outfit_label, created_at, updated_at
       FROM measurements
