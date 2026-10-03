@@ -4,7 +4,6 @@
  */
 
 const express = require('express');
-const path = require('path');
 const { errorHandler, notFoundHandler } = require('./middleware/error');
 const { swaggerUi, specs } = require('./config/swagger');
 const corsMiddleware = require('./middleware/security/cors');
@@ -17,7 +16,6 @@ const requestLogger = require('./middleware/logging');
 const { globalLimiter } = require('./middleware/rateLimit/limitersRedis');
 const { getStatus: getRedisStatus } = require('./config/redis');
 
-// Import routes
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const shopRoutes = require('./routes/shop.routes');
@@ -36,13 +34,9 @@ const notificationRoutes = require('./routes/notification.routes');
 const galleryRoutes = require('./routes/gallery.routes');
 const invoiceRoutes = require('./routes/invoice.routes');
 
-// Initialize Express app
 const app = express();
 
-// Trust proxy
 app.set('trust proxy', 1);
-
-// Security hardening
 app.disable('x-powered-by');
 app.use(requestId);
 app.use(helmetMiddleware);
@@ -51,22 +45,16 @@ app.use(corsMiddleware);
 app.use(compressionMiddleware);
 app.use(hppMiddleware);
 
-// Webhook route needs the raw payload for signature validation
 app.use('/api/webhooks', webhooksRoutes);
 
-// Body parsers
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ limit: '1mb', extended: false }));
 
-// Request timeout
 app.use(requestTimeout);
 app.use((req, res, next) => {
-  if (!req.timedout) {
-    next();
-  }
+  if (!req.timedout) next();
 });
 
-// Cheap liveness, and bounded/cache-coalesced dependency readiness.
 app.get(['/health','/live'],(req,res)=>res.json({success:true,status:'OK'}));
 const ready = require('./services/readiness').createReadinessProbe({
   checkDatabase:()=>require('./config/database').pool.query({text:'SELECT 1',query_timeout:2000}),
@@ -79,7 +67,6 @@ app.use(globalLimiter);
 app.get('/',(req,res)=>res.json({success:true,message:'StitchBook backend is running',health:'/health',api:'/api'}));
 app.get('/api',(req,res)=>res.json({success:true,message:'StitchBook API is running'}));
 
-// Swagger UI - API Documentation
 if (process.env.NODE_ENV !== 'production') {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
     customCss: `
@@ -95,15 +82,6 @@ if (process.env.NODE_ENV !== 'production') {
   }));
 }
 
-// Static file serving for uploads
-app.get('/uploads/:shopId/:filename',(req,res)=>{
-  const {shopId,filename}=req.params;
-  if(!require('./utils/privateFiles').verifyFile(shopId,filename,req.query.expires,req.query.signature)) return res.sendStatus(404);
-  res.set('Cache-Control','private, max-age=60');
-  res.sendFile(path.join(__dirname,'../uploads',shopId,filename));
-});
-
-// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/shop', shopRoutes);
@@ -121,10 +99,7 @@ app.use('/api/notification', notificationRoutes);
 app.use('/api/gallery', galleryRoutes);
 app.use('/api/invoice', invoiceRoutes);
 
-// 404 handler (must be before error handler)
 app.use(notFoundHandler);
-
-// Global error handling middleware
 app.use(errorHandler);
 
 module.exports = app;
