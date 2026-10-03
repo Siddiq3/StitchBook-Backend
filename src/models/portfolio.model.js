@@ -29,7 +29,7 @@ class PortfolioModel {
    * @param {string} category - Filter by category (optional)
    * @returns {array} - Array of portfolio items
    */
-  static async getPortfolioByShop(shopId, category = null) {
+  static async getPortfolioByShop(shopId, category = null, limit = 20, offset = 0) {
     let query = `
       SELECT id, shop_id, image_url, category, title, created_at
       FROM portfolio
@@ -43,7 +43,8 @@ class PortfolioModel {
       params.push(category);
     }
     
-    query += ` ORDER BY created_at DESC;`;
+    params.push(limit, offset);
+    query += ` ORDER BY created_at DESC LIMIT ${params.length - 1} OFFSET ${params.length};`;
     
     return db.queryAll(query, params);
   }
