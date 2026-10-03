@@ -224,10 +224,11 @@ class StaffModel {
              created_at, updated_at
       FROM staff
       WHERE shop_id = $1 AND role = $2 AND is_active = true
-      ORDER BY name;
+      ORDER BY name
+      LIMIT $3 OFFSET $4;
     `;
     
-    return db.queryAll(query, [shopId, role]);
+    return db.queryAll(query, [shopId, role, limit, offset]);
   }
 
   static async getStaffByPhone(phone) {
