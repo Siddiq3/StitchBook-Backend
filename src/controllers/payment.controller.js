@@ -9,6 +9,7 @@ const OrderModel = require('../models/order.model');
 const AuthorizationService = require('../services/authorization.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
+const { parsePagination } = require('../utils/pagination');
 
 /**
  * POST /payment/cashfree/create-order
@@ -132,6 +133,7 @@ exports.getPaymentsByOrder = async (req, res) => {
   try {
     const userId = req.user.id;
     const { orderId } = req.params;
+    const { page, limit, offset } = parsePagination(req, 20, 100);
 
     // Verify order ownership
     const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
@@ -140,9 +142,9 @@ exports.getPaymentsByOrder = async (req, res) => {
     }
 
     // Get payments
-    const payments = await PaymentService.getPaymentsByOrder(orderId);
+    const payments = await PaymentService.getPaymentsByOrder(orderId, limit, offset);
 
-    responder.success(res, 200, 'Payments retrieved', { items: payments });
+    responder.success(res, 200, 'Payments retrieved', { items: payments, pagination: { page, limit, offset, hasMore: payments.length === limit } });
   } catch (error) {
     logger.error('Get payments error:', error.message);
     responder.error(res, 500, 'Failed to get payments', error.message);

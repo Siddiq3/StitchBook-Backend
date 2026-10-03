@@ -70,22 +70,21 @@ class MeasurementModel {
    * @param {number} customerId - Customer ID
    * @returns {array} - Array of measurement records
    */
-  static async getMeasurementsByCustomer(customerId, outfitType = null) {
+  static async getMeasurementsByCustomer(customerId, outfitType = null, limit = 20, offset = 0) {
+    const values = [customerId];
     let query = `
       SELECT id, customer_id, measurements_data, outfit_type, outfit_label, created_at, updated_at
       FROM measurements
       WHERE customer_id = $1
     `;
-    const values = [customerId];
 
     if (outfitType) {
-      query += ` AND LOWER(outfit_type) = LOWER($2)`;
-      values.push(outfitType);
+      query += ` AND LOWER(outfit_type) = LOWER($2) ORDER BY created_at DESC LIMIT $3 OFFSET $4`;
+      values.push(outfitType, limit, offset);
+    } else {
+      query += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`;
+      values.push(limit, offset);
     }
-
-    query += `
-      ORDER BY created_at DESC;
-    `;
 
     const results = await db.queryAll(query, values);
     return results.map(r => ({

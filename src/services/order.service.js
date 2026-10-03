@@ -5,6 +5,7 @@
 
 const OrderModel = require('../models/order.model');
 const logger = require('../utils/logger');
+const DashboardCacheService = require('./dashboardCache.service');
 
 // Valid order statuses. Keep in_progress readable for older orders, but write the
 // tailoring-specific production flow from the app.
@@ -26,6 +27,7 @@ class OrderService {
         ...orderData,
       });
 
+      await DashboardCacheService.invalidateDashboardCache(shopId);
       logger.info(`Order created for customer: ${customerId}`);
       return order;
     } catch (error) {
@@ -130,6 +132,7 @@ class OrderService {
         throw new Error('Failed to update order');
       }
 
+      await DashboardCacheService.invalidateDashboardCache(order.shop_id);
       logger.info(`Updated order: ${orderId}`);
       return order;
     } catch (error) {
@@ -145,12 +148,17 @@ class OrderService {
    */
   static async deleteOrder(orderId) {
     try {
+      const existingOrder = await OrderModel.getOrderById(orderId);
+      if (!existingOrder) {
+        throw new Error('Order not found');
+      }
+
       const result = await OrderModel.deleteOrder(orderId);
-      
       if (!result) {
         throw new Error('Failed to delete order');
       }
 
+      await DashboardCacheService.invalidateDashboardCache(existingOrder.shop_id);
       logger.info(`Deleted order: ${orderId}`);
       return true;
     } catch (error) {

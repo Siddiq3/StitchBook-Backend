@@ -9,9 +9,7 @@
     "test": "node --test tests/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
     "lint": "eslint src tests scripts",
-    "migrate:hardening": "node scripts/migrate-hardening.js",
-    "migrate:password-auth": "node scripts/migrate-password-auth.js",
-    "migrate:cashfree": "node scripts/migrate-cashfree.js"
+    "migrate": "node scripts/migrate.js"
   },
   "keywords": [
     "tailor",

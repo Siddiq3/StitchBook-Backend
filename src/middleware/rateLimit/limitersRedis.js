@@ -91,11 +91,13 @@ const createLimiterWithFallback = (options) => {
   };
 };
 
-const globalLimiter = createLimiterWithFallback({
+// Global traffic uses process memory so ordinary API reads do not spend Redis
+// commands. Security-sensitive endpoints below remain Redis-backed so limits
+// are shared across instances.
+const globalLimiter = createMemoryLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 300,
   message: 'Too many requests from this IP, please try again later',
-  keyPrefix: `${redisPrefix}rate:global:`,
 });
 
 const loginLimiter = createLimiterWithFallback({

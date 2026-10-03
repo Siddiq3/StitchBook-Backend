@@ -28,15 +28,16 @@ class ActivityLogModel {
    * @param {number} orderId - Order ID
    * @returns {array} - Array of activity logs
    */
-  static async getActivityLogByOrder(orderId) {
+  static async getActivityLogByOrder(orderId, limit = 20, offset = 0) {
     const query = `
       SELECT id, order_id, shop_id, user_id, action_type, old_value, new_value, notes, created_at
       FROM activity_log
       WHERE order_id = $1
-      ORDER BY created_at DESC;
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3;
     `;
     
-    return db.queryAll(query, [orderId]);
+    return db.queryAll(query, [orderId, limit, offset]);
   }
 
   /**
