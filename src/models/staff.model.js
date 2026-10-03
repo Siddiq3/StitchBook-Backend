@@ -216,7 +216,7 @@ class StaffModel {
    * @param {string} role - Staff role
    * @returns {array} - Array of staff members
    */
-  static async getStaffByRole(shopId, role) {
+  static async getStaffByRole(shopId, role, limit = 50, offset = 0) {
     const query = `
       SELECT id, shop_id, name, phone, email, role, salary, commission_rate,
              payment_type, pay_rate, aadhar_number, address, photo_url, is_active, joined_date,
