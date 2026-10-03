@@ -12,6 +12,7 @@ const db = require('../config/database');
 const crypto = require('crypto');
 const { transaction } = require('../models/billingLedger');
 const { client: redis, isReady: isRedisReady, keyPrefix } = require('../config/redis');
+const DashboardCacheService = require('./dashboardCache.service');
 
 const CHECKOUT_TTL_SECONDS = 15 * 60;
 const checkoutKey = (token) => `${keyPrefix}payment_checkout:${token}`;
@@ -103,6 +104,7 @@ class PaymentService {
       const totalPaid=Number((await client.query('SELECT COALESCE(SUM(amount),0) AS total_paid FROM payments WHERE order_id=$1',[orderId])).rows[0].total_paid);
       await client.query('UPDATE orders SET advance_paid=$2,balance_due=total_amount-$2,updated_at=NOW() WHERE id=$1',[orderId,totalPaid]);
       await client.query(`INSERT INTO activity_log(order_id,shop_id,user_id,action_type,new_value,notes) VALUES($1,$2,$3,'payment',$4,$5)`,[orderId,shopId,userId,String(amount),`Payment recorded: ₹${amount} via ${paymentMethod}`]);
+      await DashboardCacheService.invalidateDashboardCache(shopId);
       return payment;
     });
   }
@@ -167,6 +169,7 @@ class PaymentService {
           advance_paid: totalPaid,
           balance_due: balanceDue,
         });
+        await DashboardCacheService.invalidateDashboardCache(order.shop_id);
 
         logger.info(`Payment deleted: ${paymentId}`);
       }
