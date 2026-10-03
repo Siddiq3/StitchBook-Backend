@@ -28,7 +28,7 @@ class StaffController {
       return res.status(200).json({
         success: true,
         message: 'Staff profile retrieved successfully',
-        data: { staff, pagination: { page, limit, offset, hasMore: staff.length === limit } },
+        data: staff,
         error: {}
       });
     } catch (error) {
@@ -512,7 +512,7 @@ class StaffController {
       return res.status(200).json({
         success: true,
         message: 'Staff members retrieved successfully',
-        data: staff,
+        data: { staff, pagination: { page, limit, offset, hasMore: staff.length === limit } },
         error: {}
       });
     } catch (error) {
