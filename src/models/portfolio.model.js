@@ -30,23 +30,23 @@ class PortfolioModel {
    * @returns {array} - Array of portfolio items
    */
   static async getPortfolioByShop(shopId, category = null, limit = 20, offset = 0) {
-    let query = `
+    if (category) {
+      return db.queryAll(`
+        SELECT id, shop_id, image_url, category, title, created_at
+        FROM portfolio
+        WHERE shop_id = $1 AND category = $2
+        ORDER BY created_at DESC
+        LIMIT $3 OFFSET $4
+      `, [shopId, category, limit, offset]);
+    }
+
+    return db.queryAll(`
       SELECT id, shop_id, image_url, category, title, created_at
       FROM portfolio
       WHERE shop_id = $1
-    `;
-    
-    const params = [shopId];
-    
-    if (category) {
-      query += ` AND category = $2`;
-      params.push(category);
-    }
-    
-    params.push(limit, offset);
-    query += ` ORDER BY created_at DESC LIMIT ${params.length - 1} OFFSET ${params.length};`;
-    
-    return db.queryAll(query, params);
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3
+    `, [shopId, limit, offset]);
   }
 
   /**
