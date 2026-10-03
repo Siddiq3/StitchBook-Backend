@@ -8,11 +8,17 @@ const logger = require('../utils/logger');
 require('./env');
 const { databaseTlsConfig } = require('./databaseTls');
 
+const boundedInt = (value, fallback, min, max) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+};
+
 const pool = new Pool({
   ...databaseTlsConfig(),
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  max: boundedInt(process.env.DB_POOL_MAX, 5, 1, 20),
+  idleTimeoutMillis: boundedInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 30000, 5000, 120000),
+  connectionTimeoutMillis: boundedInt(process.env.DB_CONNECT_TIMEOUT_MS, 10000, 1000, 30000),
 });
 
 // Test connection
