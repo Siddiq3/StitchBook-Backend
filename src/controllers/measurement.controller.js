@@ -8,6 +8,7 @@ const MeasurementService = require('../services/measurement.service');
 const AuthorizationService = require('../services/authorization.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
+const { parsePagination } = require('../utils/pagination');
 
 /**
  * POST /measurement
@@ -57,16 +58,22 @@ exports.getMeasurementsByCustomer = async (req, res) => {
     const userId = req.user.id;
     const { customerId } = req.params;
     const { outfit_type } = req.query;
+    const { page, limit, offset } = parsePagination(req, 20, 100);
 
     // Verify customer belongs to user's shop
     await AuthorizationService.verifyCustomerOwnership(userId, customerId);
 
     const measurements = await MeasurementService.getMeasurementsByCustomer(
       customerId,
-      outfit_type
+      outfit_type,
+      limit,
+      offset
     );
 
-    responder.success(res, 200, 'Measurements retrieved', { measurements });
+    responder.success(res, 200, 'Measurements retrieved', {
+      measurements,
+      pagination: { page, limit, offset, hasMore: measurements.length === limit },
+    });
   } catch (error) {
     logger.error('Get measurements error:', error.message);
     if (error.message.includes('Unauthorized')) {
