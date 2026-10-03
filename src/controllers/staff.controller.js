@@ -28,7 +28,7 @@ class StaffController {
       return res.status(200).json({
         success: true,
         message: 'Staff profile retrieved successfully',
-        data: staff,
+        data: { staff, pagination: { page, limit, offset, hasMore: staff.length === limit } },
         error: {}
       });
     } catch (error) {
@@ -505,8 +505,9 @@ class StaffController {
   static async getStaffByRole(req, res) {
     try {
       const { role } = req.params;
+      const { page, limit, offset } = parsePagination(req, 50, 100);
       const shop = await AuthorizationService.getUserShop(req.user.id);
-      const staff = await StaffModel.getStaffByRole(shop.id, role);
+      const staff = await StaffModel.getStaffByRole(shop.id, role, limit, offset);
 
       return res.status(200).json({
         success: true,
