@@ -132,9 +132,9 @@ class PaymentService {
    * @param {number} orderId - Order ID
    * @returns {array} - Array of payments
    */
-  static async getPaymentsByOrder(orderId) {
+  static async getPaymentsByOrder(orderId, limit = 20, offset = 0) {
     try {
-      const payments = await PaymentModel.getPaymentsByOrder(orderId);
+      const payments = await PaymentModel.getPaymentsByOrder(orderId, limit, offset);
       logger.info(`Retrieved payments for order: ${orderId}`);
       return payments;
     } catch (error) {
