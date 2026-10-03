@@ -5,6 +5,7 @@
 
 const CustomerModel = require('../models/customer.model');
 const logger = require('../utils/logger');
+const DashboardCacheService = require('./dashboardCache.service');
 
 class CustomerService {
   /**
@@ -20,6 +21,7 @@ class CustomerService {
         ...customerData,
       });
 
+      await DashboardCacheService.invalidateDashboardCache(shopId);
       logger.info(`Customer created for shop: ${shopId}`);
       return customer;
     } catch (error) {
@@ -113,6 +115,7 @@ class CustomerService {
         throw new Error('Failed to update customer');
       }
 
+      await DashboardCacheService.invalidateDashboardCache(customer.shop_id);
       logger.info(`Updated customer: ${customerId}`);
       return customer;
     } catch (error) {
@@ -128,12 +131,17 @@ class CustomerService {
    */
   static async deleteCustomer(customerId) {
     try {
+      const existingCustomer = await CustomerModel.getCustomerById(customerId);
+      if (!existingCustomer) {
+        throw new Error('Customer not found');
+      }
+
       const result = await CustomerModel.deleteCustomer(customerId);
-      
       if (!result) {
         throw new Error('Failed to delete customer');
       }
 
+      await DashboardCacheService.invalidateDashboardCache(existingCustomer.shop_id);
       logger.info(`Deleted customer: ${customerId}`);
       return true;
     } catch (error) {
