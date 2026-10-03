@@ -14,6 +14,8 @@ const boundedInt = (value, fallback, min, max) => {
   return Math.max(min, Math.min(max, parsed));
 };
 
+const SLOW_QUERY_MS = boundedInt(process.env.SLOW_QUERY_MS, 250, 50, 5000);
+
 const pool = new Pool({
   ...databaseTlsConfig(),
   max: boundedInt(process.env.DB_POOL_MAX, 5, 1, 20),
@@ -41,7 +43,11 @@ const query = async (text, params) => {
   try {
     const result = await pool.query(text, params);
     const duration = Date.now() - start;
-    logger.info(`Executed query in ${duration}ms`);
+    if (duration >= SLOW_QUERY_MS) {
+      logger.warn('Slow database query', { durationMs: duration });
+    } else {
+      logger.debug('Database query completed', { durationMs: duration });
+    }
     return result;
   } catch (error) {
     logger.error('Database query error:', error);
