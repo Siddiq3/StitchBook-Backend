@@ -95,7 +95,7 @@ tailor-backend/
 │   └── server.js                # Server entry point
 ├── package.json
 ├── .env.example
-├── database.sql                 # PostgreSQL schema
+├── migrations/001_initial_schema.sql # Fresh production schema
 └── README.md
 ```
 
@@ -182,14 +182,15 @@ CREATE DATABASE tailor_app;
 # Connect to database
 \c tailor_app
 
-# Run schema (copy content from database.sql)
-# Or use: psql -U postgres -d tailor_app -f database.sql
+# Apply the canonical schema and any later migrations
+npm run migrate
 ```
 
 2. **Using Supabase:**
    - Create new project
    - Go to SQL Editor
-   - Run queries from `database.sql`
+   - Set `DATABASE_URL` to the Supabase Session Pooler connection string
+   - Run `npm run migrate`
 
 #### Start the server
 
