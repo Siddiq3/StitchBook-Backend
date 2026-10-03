@@ -44,7 +44,9 @@ class ShopService {
       const shop = await ShopModel.getShopByUserId(userId);
       
       if (!shop) {
-        throw new Error('Shop not found');
+        const error = new Error('Shop not found');
+        error.code = 'SHOP_NOT_FOUND';
+        throw error;
       }
 
       logger.info(`Retrieved shop for user: ${userId}`);

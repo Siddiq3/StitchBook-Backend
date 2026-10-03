@@ -55,7 +55,10 @@ exports.getShop = async (req, res) => {
     responder.success(res, 200, 'Shop retrieved', shop);
   } catch (error) {
     logger.error('Get shop error:', error.message);
-    responder.error(res, 404, error.message);
+    if (error.code === 'SHOP_NOT_FOUND') {
+      return responder.error(res, 404, 'Shop not found', { code: 'SHOP_NOT_FOUND' });
+    }
+    responder.error(res, 500, 'Failed to load shop');
   }
 };
 
