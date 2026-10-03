@@ -43,9 +43,9 @@ class ActivityService {
    * @param {number} orderId - Order ID
    * @returns {array} - Array of activity logs
    */
-  static async getActivityLogByOrder(orderId) {
+  static async getActivityLogByOrder(orderId, limit = 20, offset = 0) {
     try {
-      const logs = await ActivityLogModel.getActivityLogByOrder(orderId);
+      const logs = await ActivityLogModel.getActivityLogByOrder(orderId, limit, offset);
       logger.info(`Retrieved activity logs for order: ${orderId}`);
       return logs;
     } catch (error) {
