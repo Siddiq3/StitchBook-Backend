@@ -14,7 +14,8 @@ const stream = {
   write: (message) => logger.info(message.trim()),
 };
 
-const skip = () => process.env.NODE_ENV === 'test';
+// Platform health probes run every few seconds; logging them only adds log volume
+const skip = (req) => process.env.NODE_ENV === 'test' || ['/health', '/live', '/ready'].includes(req.path);
 
 module.exports = morgan(
   ':id :remote-addr :method :safe-path :status :res[content-length] - :response-time ms user=:user',

@@ -79,6 +79,33 @@ class UserModel {
    * @param {number} userId - User ID
    * @returns {object} - User data or null
    */
+  /**
+   * Everything the auth middleware needs, in one round trip instead of four:
+   * the user, the shop they own, their active staff record, and whether the
+   * owner of a shop they work for is mid-deletion.
+   */
+  static async getAuthContext(userId) {
+    return db.queryRow(`
+      SELECT u.id, u.email, u.shop_id, u.deletion_started_at,
+             owned.id AS owned_shop_id,
+             st.id AS staff_id, st.shop_id AS staff_shop_id, st.access_role,
+             st.permissions, st.can_login,
+             EXISTS (
+               SELECT 1 FROM staff any_st
+               JOIN shops sh ON sh.id = any_st.shop_id
+               JOIN users owner ON owner.id = sh.user_id
+               WHERE any_st.user_id = u.id AND owner.deletion_started_at IS NOT NULL
+             ) AS owner_deleting
+      FROM users u
+      LEFT JOIN LATERAL (SELECT id FROM shops WHERE user_id = u.id LIMIT 1) owned ON true
+      LEFT JOIN LATERAL (
+        SELECT id, shop_id, access_role, permissions, can_login
+        FROM staff WHERE user_id = u.id AND is_active = true LIMIT 1
+      ) st ON true
+      WHERE u.id = $1;
+    `, [userId]);
+  }
+
   static async getUserById(userId) {
     try {
       const query = `

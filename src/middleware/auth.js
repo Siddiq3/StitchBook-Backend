@@ -8,8 +8,6 @@ const TokenService = require('../services/token.service');
 const SessionService = require('../services/session.service');
 const TokenBlacklistService = require('../services/tokenBlacklist.service');
 const UserModel = require('../models/user.model');
-const ShopModel = require('../models/shop.model');
-const StaffModel = require('../models/staff.model');
 const { mergePermissions } = require('../services/permissions.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
@@ -69,23 +67,27 @@ const authMiddleware = async (req, res, next) => {
       }
     }
 
-    // Verify user still exists
-    const user = await UserModel.getUserById(decoded.userId);
+    // Verify user still exists (one query for user, shop, staff and deletion state)
+    const user = await UserModel.getAuthContext(decoded.userId);
     if (!user) {
       logger.warn(`User not found: userId=${decoded.userId}`);
       return responder.error(res, 401, 'User not found');
     }
 
-    if (user.deletion_started_at && !req.originalUrl.startsWith('/api/auth/') && !req.originalUrl.startsWith('/api/user/delete-account')) {
+    const deletionExempt = req.originalUrl.startsWith('/api/auth/') || req.originalUrl.startsWith('/api/user/delete-account');
+    if (user.deletion_started_at && !deletionExempt) {
       return responder.error(res,403,'Account deletion is in progress', {code:'ACCOUNT_DELETING'});
     }
-    const ownerDeleting = await require('../config/database').queryRow(`SELECT u.id FROM users u JOIN shops s ON s.user_id=u.id JOIN staff st ON st.shop_id=s.id WHERE st.user_id=$1 AND u.deletion_started_at IS NOT NULL LIMIT 1`,[decoded.userId]);
-    if (ownerDeleting && !req.originalUrl.startsWith('/api/auth/') && !req.originalUrl.startsWith('/api/user/delete-account')) return responder.error(res,403,'This shop is unavailable');
+    if (user.owner_deleting && !deletionExempt) return responder.error(res,403,'This shop is unavailable');
 
-    const [ownedShop, staffAccount] = await Promise.all([
-      ShopModel.getShopByUserId(decoded.userId),
-      StaffModel.getStaffByUserId(decoded.userId),
-    ]);
+    const ownedShop = user.owned_shop_id ? { id: user.owned_shop_id } : null;
+    const staffAccount = user.staff_id ? {
+      id: user.staff_id,
+      shop_id: user.staff_shop_id,
+      access_role: user.access_role,
+      permissions: user.permissions,
+      can_login: user.can_login,
+    } : null;
 
     const isOwner = Boolean(ownedShop);
     const actorRole = isOwner ? 'owner' : staffAccount?.access_role || 'pending_owner';
@@ -96,7 +98,9 @@ const authMiddleware = async (req, res, next) => {
           ? mergePermissions(staffAccount.access_role, staffAccount.permissions)
           : []
         : ['shop:read', 'shop:write'];
-    const shopId = ownedShop?.id || staffAccount?.shop_id || user?.shop_id || null;
+    // Shop access comes only from owning a shop or an *active* staff record.
+    // users.shop_id is not trusted: it is left behind when staff are removed.
+    const shopId = ownedShop?.id || staffAccount?.shop_id || null;
 
     req.user = {
       id: decoded.userId,
@@ -113,7 +117,7 @@ const authMiddleware = async (req, res, next) => {
       sessionId: decoded.sessionId,
     };
 
-    logger.info(`✓ User authenticated: ${decoded.userId}`);
+    logger.debug(`User authenticated: ${decoded.userId}`);
     next();
   } catch (error) {
     logger.warn('Authentication failed:', error.message);
