@@ -34,9 +34,9 @@ class PortfolioService {
    * @param {string} category - Filter by category (optional)
    * @returns {array} - Array of portfolio items
    */
-  static async getPortfolioByShop(shopId, category = null) {
+  static async getPortfolioByShop(shopId, category = null, limit = 20, offset = 0) {
     try {
-      const items = await PortfolioModel.getPortfolioByShop(shopId, category);
+      const items = await PortfolioModel.getPortfolioByShop(shopId, category, limit, offset);
       logger.info(`Retrieved portfolio items for shop: ${shopId}`);
       return items;
     } catch (error) {

@@ -7,6 +7,7 @@ const ActivityService = require('../services/activity.service');
 const AuthorizationService = require('../services/authorization.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
+const { parsePagination } = require('../utils/pagination');
 
 /**
  * GET /activity/order/:orderId
@@ -16,6 +17,7 @@ exports.getActivityByOrder = async (req, res) => {
   try {
     const userId = req.user.id;
     const { orderId } = req.params;
+    const { page, limit, offset } = parsePagination(req, 20, 100);
 
     // Verify order ownership
     const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
@@ -24,9 +26,9 @@ exports.getActivityByOrder = async (req, res) => {
     }
 
     // Get activity logs
-    const logs = await ActivityService.getActivityLogByOrder(orderId);
+    const logs = await ActivityService.getActivityLogByOrder(orderId, limit, offset);
 
-    responder.success(res, 200, 'Activity logs retrieved', { items: logs });
+    responder.success(res, 200, 'Activity logs retrieved', { items: logs, pagination: { page, limit, offset, hasMore: logs.length === limit } });
   } catch (error) {
     logger.error('Get activity logs error:', error.message);
     responder.error(res, 500, 'Failed to get activity logs', error.message);

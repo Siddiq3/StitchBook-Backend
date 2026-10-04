@@ -216,7 +216,7 @@ class StaffModel {
    * @param {string} role - Staff role
    * @returns {array} - Array of staff members
    */
-  static async getStaffByRole(shopId, role) {
+  static async getStaffByRole(shopId, role, limit = 50, offset = 0) {
     const query = `
       SELECT id, shop_id, name, phone, email, role, salary, commission_rate,
              payment_type, pay_rate, aadhar_number, address, photo_url, is_active, joined_date,
@@ -224,10 +224,11 @@ class StaffModel {
              created_at, updated_at
       FROM staff
       WHERE shop_id = $1 AND role = $2 AND is_active = true
-      ORDER BY name;
+      ORDER BY name
+      LIMIT $3 OFFSET $4;
     `;
     
-    return db.queryAll(query, [shopId, role]);
+    return db.queryAll(query, [shopId, role, limit, offset]);
   }
 
   static async getStaffByPhone(phone) {

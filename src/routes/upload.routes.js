@@ -1,60 +1,30 @@
 /**
  * Upload Routes
- * File upload endpoints
+ * Clients upload image bytes directly to Supabase Storage using signed URLs.
  */
 
 const express = require('express');
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
 const uploadController = require('../controllers/upload.controller');
 const authMiddleware = require('../middleware/auth');
 const subscriptionGate = require('../middleware/subscriptionGate');
 const { uploadLimiter } = require('../middleware/rateLimit/limitersRedis');
+const { requirePermission } = require('../middleware/permissions');
 
 const router = express.Router();
 
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const shopId = req.user?.shop_id ?? req.user?.shopId;
-      if (shopId === undefined || shopId === null || shopId === '') {
-        return cb(new Error('Authenticated shop context is required'));
-      }
+router.get(
+  '/access',
+  authMiddleware,
+  requirePermission('shop:read'),
+  uploadController.createSignedAccess
+);
 
-      const tenantDir = path.join(__dirname, '../../uploads', String(shopId));
-      fs.mkdirSync(tenantDir, { recursive: true });
-      cb(null, tenantDir);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const extension={'image/jpeg':'.jpg','image/png':'.png','image/gif':'.gif','image/webp':'.webp'}[file.mimetype];
-      cb(null, uniqueSuffix + extension);
-    }
-  }),
-  fileFilter: (req, file, cb) => {
-    // Only allow image files
-    const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (allowedMimes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'));
-    }
-  },
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
-  }
-});
-
-router.get('/access',authMiddleware,require('../middleware/permissions').requirePermission('shop:read'),(req,res)=>{
-  const match=String(req.query.path||'').match(/^\/uploads\/([1-9]\d*)\/([A-Za-z0-9_-]+\.(?:jpg|jpeg|png|gif|webp))$/);
-  if(!match||String(req.user.shop_id)!==match[1]) return res.sendStatus(404);
-  const token=require('../utils/privateFiles').signFile(match[1],match[2]);
-  const base=process.env.BASE_URL||(process.env.NODE_ENV!=='production'?'http://localhost:5002':null);
-  if(!base) return res.sendStatus(503);
-  res.json({success:true,data:{url:`${base.replace(/\/$/,'')}${req.query.path}?expires=${token.expires}&signature=${token.signature}`,expiresIn:300}});
-});
-// POST /upload - Upload an image file (authenticated)
-router.post('/', authMiddleware, subscriptionGate, uploadLimiter, upload.single('image'), uploadController.uploadImage);
+router.post(
+  ['/sign', '/'],
+  authMiddleware,
+  subscriptionGate,
+  uploadLimiter,
+  uploadController.createSignedUpload
+);
 
 module.exports = router;

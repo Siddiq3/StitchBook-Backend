@@ -1,25 +1,21 @@
 /**
  * Pagination utilities
- * Enforces safe limit and offset handling for query params.
+ * Enforces safe page/limit/offset handling for query params.
  */
 
 const parsePagination = (req, defaultLimit = 20, maxLimit = 100) => {
-  const page = Number.isNaN(parseInt(req.query.page, 10)) ? 1 : parseInt(req.query.page, 10);
-  const offset = Number.isNaN(parseInt(req.query.offset, 10)) ? 0 : parseInt(req.query.offset, 10);
-  let limit = Number.isNaN(parseInt(req.query.limit, 10)) ? defaultLimit : parseInt(req.query.limit, 10);
+  const rawPage = parseInt(req.query.page, 10);
+  const rawLimit = parseInt(req.query.limit, 10);
+  const rawOffset = parseInt(req.query.offset, 10);
 
-  const safePage = page > 0 ? page : 1;
-  const safeOffset = offset >= 0 ? offset : 0;
-  limit = limit > 0 ? limit : defaultLimit;
+  const page = Number.isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
+  let limit = Number.isNaN(rawLimit) || rawLimit < 1 ? defaultLimit : rawLimit;
   limit = Math.min(limit, maxLimit);
 
-  return {
-    limit,
-    offset: safeOffset,
-    page: safePage,
-  };
+  const hasExplicitOffset = req.query.offset !== undefined && !Number.isNaN(rawOffset);
+  const offset = hasExplicitOffset ? Math.max(0, rawOffset) : (page - 1) * limit;
+
+  return { page, limit, offset };
 };
 
-module.exports = {
-  parsePagination,
-};
+module.exports = { parsePagination };

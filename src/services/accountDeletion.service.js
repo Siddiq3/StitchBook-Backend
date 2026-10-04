@@ -1,6 +1,5 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const path = require('path');
 const db = require('../config/database');
 const { transaction } = require('../models/billingLedger');
 const { JWT_SECRET } = require('../config/env');
@@ -8,11 +7,11 @@ const SessionService = require('./session.service');
 const UserModel = require('../models/user.model');
 const GoogleAuth = require('./googleAuth.service');
 const Msg91 = require('./msg91Widget.service');
+const StorageService = require('./storage.service');
 
 const shopScope = 'SELECT id FROM shops WHERE user_id=$1';
 const orderScope = `SELECT id FROM orders WHERE shop_id IN (${shopScope})`;
 const customerScope = `SELECT id FROM customers WHERE shop_id IN (${shopScope})`;
-// Child-first bounded cleanup, preserving records in other tenants.
 const phases = [
   ['payments', `shop_id IN (${shopScope})`],
   ['activity_log', `shop_id IN (${shopScope})`],
@@ -37,6 +36,7 @@ const phases = [
   ['staff','user_id=$1','user_id'],
   ['customer_payment_checkouts', "session->>'userId'=$1::text"],
 ];
+
 async function hasColumn(client, table, column) {
   return (await client.query(`SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2`, [table,column])).rowCount > 0;
 }
@@ -61,6 +61,7 @@ function verifyToken(token) {
 }
 const hash = token => crypto.createHash('sha256').update(token).digest('hex');
 const invalidRequest = (message, status=400) => Object.assign(new Error(message), {status});
+
 async function begin(userId, proof, confirmation) {
   if (confirmation !== 'DELETE') throw invalidRequest('Type DELETE to confirm permanent deletion');
   await verifyIdentity(userId, proof).catch(error=>{error.status=400;throw error;});
@@ -73,6 +74,7 @@ async function begin(userId, proof, confirmation) {
   });
   return {deletionToken:token, state:'IN_PROGRESS',complete:false};
 }
+
 async function resume(token) {
   const userId = verifyToken(token);
   const job = await db.queryRow('SELECT * FROM account_deletions WHERE user_id=$1',[userId]);
@@ -82,7 +84,6 @@ async function resume(token) {
   }
   if (job.token_hash !== hash(token)) throw invalidRequest('Deletion token was replaced. Please re-authenticate',401);
   if (Number(job.phase) === 0) {
-    // Cashfree purchases are prepaid; no recurring mandate needs cancellation.
     await db.query('UPDATE account_deletions SET phase=1,updated_at=NOW() WHERE user_id=$1 AND phase=0',[userId]);
     return {complete:false,state:'IN_PROGRESS'};
   }
@@ -99,11 +100,10 @@ async function resume(token) {
       return {complete:false,state:'IN_PROGRESS'};
     });
   }
-  // Files must be removed before the final identity/ownership records disappear.
-  const filesComplete = await require('./privateFileCleanup').cleanupTenantFiles(path.join(__dirname,'../../uploads'), job.shop_ids || []);
+  const filesComplete = await StorageService.deleteShopFiles(job.shop_ids || [], 100);
   if (!filesComplete) return {complete:false,state:'IN_PROGRESS'};
   const sessions=await SessionService.revokeSessionBatch(userId);
-  if(sessions.remaining) return {complete:false,state:"IN_PROGRESS"};
+  if(sessions.remaining) return {complete:false,state:'IN_PROGRESS'};
   await transaction(async client => {
     await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[userId]);
     if (await hasColumn(client,'users','shop_id')) await client.query(`UPDATE users SET shop_id=NULL WHERE shop_id IN (${shopScope})`,[userId]);
@@ -112,4 +112,5 @@ async function resume(token) {
   });
   return {complete:true,state:'COMPLETE'};
 }
+
 module.exports = { begin, resume, verifyToken, phases };

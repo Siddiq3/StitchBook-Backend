@@ -43,15 +43,16 @@ class PaymentModel {
    * @param {number} orderId - Order ID
    * @returns {array} - Array of payments
    */
-  static async getPaymentsByOrder(orderId) {
+  static async getPaymentsByOrder(orderId, limit = 20, offset = 0) {
     const query = `
       SELECT id, order_id, shop_id, amount, payment_method, payment_date, recorded_by, notes, created_at
       FROM payments
       WHERE order_id = $1
-      ORDER BY created_at DESC;
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3;
     `;
     
-    return db.queryAll(query, [orderId]);
+    return db.queryAll(query, [orderId, limit, offset]);
   }
 
   /**

@@ -7,6 +7,7 @@ const PortfolioService = require('../services/portfolio.service');
 const AuthorizationService = require('../services/authorization.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
+const { parsePagination } = require('../utils/pagination');
 
 /**
  * POST /portfolio
@@ -47,14 +48,15 @@ exports.getPortfolioItems = async (req, res) => {
   try {
     const userId = req.user.id;
     const { category } = req.query;
+    const { page, limit, offset } = parsePagination(req, 20, 100);
 
     // Get user's shop
     const shop = await AuthorizationService.getUserShop(userId);
 
     // Get portfolio items
-    const items = await PortfolioService.getPortfolioByShop(shop.id, category);
+    const items = await PortfolioService.getPortfolioByShop(shop.id, category, limit, offset);
 
-    responder.success(res, 200, 'Portfolio items retrieved', { items });
+    responder.success(res, 200, 'Portfolio items retrieved', { items, pagination: { page, limit, offset, hasMore: items.length === limit } });
   } catch (error) {
     logger.error('Get portfolio items error:', error.message);
     responder.error(res, 500, 'Failed to get portfolio items', error.message);
@@ -68,11 +70,12 @@ exports.getPortfolioItems = async (req, res) => {
 exports.getPublicPortfolio = async (req, res) => {
   try {
     const { shopId } = req.params;
+    const { page, limit, offset } = parsePagination(req, 20, 50);
 
     // Get portfolio items
-    const items = await PortfolioService.getPortfolioByShop(shopId);
+    const items = await PortfolioService.getPortfolioByShop(shopId, null, limit, offset);
 
-    responder.success(res, 200, 'Portfolio items retrieved', { items });
+    responder.success(res, 200, 'Portfolio items retrieved', { items, pagination: { page, limit, offset, hasMore: items.length === limit } });
   } catch (error) {
     logger.error('Get public portfolio error:', error.message);
     responder.error(res, 500, 'Failed to get portfolio items', error.message);

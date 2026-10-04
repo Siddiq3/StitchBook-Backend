@@ -75,9 +75,9 @@ class MeasurementService {
    * @param {number} customerId - Customer ID
    * @returns {array} - Array of measurements
    */
-  static async getMeasurementsByCustomer(customerId, outfitType = null) {
+  static async getMeasurementsByCustomer(customerId, outfitType = null, limit = 20, offset = 0) {
     try {
-      const measurements = await MeasurementModel.getMeasurementsByCustomer(customerId, outfitType);
+      const measurements = await MeasurementModel.getMeasurementsByCustomer(customerId, outfitType, limit, offset);
       
       logger.info(`Retrieved measurements for customer: ${customerId}`);
       return measurements.map((measurement) => ({

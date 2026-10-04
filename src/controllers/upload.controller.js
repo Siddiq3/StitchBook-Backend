@@ -1,46 +1,53 @@
 /**
  * Upload Controller
- * Handles file upload operations
+ * Creates time-limited Supabase Storage URLs without proxying image bytes.
  */
 
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
+const StorageService = require('../services/storage.service');
 
-/**
- * POST /upload
- * Upload an image file and return its URL
- */
-exports.uploadImage = async (req, res) => {
+const getShopId = (req) => req.user?.shop_id ?? req.user?.shopId;
+
+exports.createSignedUpload = async (req, res) => {
   try {
-    if (!req.file) {
-      return responder.error(res, 400, 'No file uploaded');
+    const { mimeType, size } = req.body || {};
+    if (!mimeType) {
+      return responder.error(res, 400, 'mimeType is required');
     }
 
-    const fs=require('fs/promises');
-    const bytes=await fs.readFile(req.file.path);
-    if(!require('../utils/privateFiles').isImage(bytes,req.file.mimetype)){
-      await fs.unlink(req.file.path);
-      return responder.error(res,400,'File content must be a supported image');
-    }
-    const authenticatedShopId = req.user?.shop_id ?? req.user?.shopId;
-    if (authenticatedShopId === undefined || authenticatedShopId === null || authenticatedShopId === '') {
-      return responder.error(res, 403, 'Authenticated shop context is required');
-    }
+    const result = await StorageService.createSignedUpload({
+      shopId: getShopId(req),
+      mimeType,
+      sizeBytes: size,
+    });
 
-    const configuredBaseUrl =
-      process.env.BASE_URL ||
-      (process.env.NODE_ENV === 'production' ? null : 'http://localhost:5002');
-
-    if (!configuredBaseUrl) {
-      return responder.error(res, 500, 'BASE_URL is not configured');
-    }
-
-    const fileUrl = `${String(configuredBaseUrl).replace(/\/$/, '')}/uploads/${authenticatedShopId}/${req.file.filename}`;
-
-    logger.info(`File uploaded for shop ${authenticatedShopId}: ${req.file.filename}`);
-    responder.success(res, 201, 'File uploaded successfully', { url: fileUrl });
+    responder.success(res, 201, 'Upload URL created', result);
   } catch (error) {
-    logger.warn('File upload failed:', error.message);
-    responder.error(res, 500, process.env.NODE_ENV === 'production' ? 'File upload failed' : error.message);
+    logger.warn('Create upload URL failed', { code: error.code || null });
+    responder.error(
+      res,
+      error.status || 500,
+      process.env.NODE_ENV === 'production' ? 'Unable to prepare image upload' : error.message
+    );
+  }
+};
+
+exports.createSignedAccess = async (req, res) => {
+  try {
+    const result = await StorageService.createSignedReadUrl({
+      shopId: getShopId(req),
+      objectPath: req.query.path,
+      expiresIn: 300,
+    });
+
+    responder.success(res, 200, 'File access URL created', result);
+  } catch (error) {
+    logger.warn('Create file access URL failed', { code: error.code || null });
+    responder.error(
+      res,
+      error.status || 500,
+      process.env.NODE_ENV === 'production' ? 'Unable to access image' : error.message
+    );
   }
 };
