@@ -28,148 +28,85 @@ exports.getDashboardStats = async (req, res) => {
     const shop = await AuthorizationService.getUserShop(userId);
     const shopId = shop.id;
 
-    // Calculate date range
-    const today = new Date().toISOString().split('T')[0];
-    let fromDate;
-    
-    if (period === 'today') {
-      fromDate = today;
-    } else if (period === 'week') {
-      const date = new Date();
-      date.setDate(date.getDate() - 7);
-      fromDate = date.toISOString().split('T')[0];
-    } else if (period === 'month') {
-      const date = new Date();
-      fromDate = new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0];
-    } else if (period === 'year') {
-      fromDate = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
-    }
+    // Period boundaries are Indian calendar days. created_at is stored as UTC
+    // (timestamp without time zone), so convert it before comparing.
+    // ponytail: shop timezone is fixed to Asia/Kolkata; add a shops.timezone column if shops outside India sign up.
+    const LOCAL_DAY = `((NOW() AT TIME ZONE 'Asia/Kolkata')::date)`;
+    const PERIOD_START = {
+      today: LOCAL_DAY,
+      week: `(${LOCAL_DAY} - 6)`,
+      month: `date_trunc('month', ${LOCAL_DAY})::date`,
+      year: `date_trunc('year', ${LOCAL_DAY})::date`,
+    }[period] || `date_trunc('month', ${LOCAL_DAY})::date`;
+    const CREATED_DAY = `((o.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date`;
+    // order_type is whitelisted above, so it is safe to inline
+    const typeFilter = filterOrderType ? ` AND o.order_type = '${filterOrderType}'` : '';
+    const trendBucket = period === 'year' ? 'month' : 'day';
 
-    // Helper function to add order_type filter to WHERE clause
-    const addOrderTypeFilter = (baseWhere = '') => {
-      if (filterOrderType) {
-        const typeFilter = ` AND order_type = '${filterOrderType}'`;
-        return baseWhere + typeFilter;
-      }
-      return baseWhere;
-    };
-
-    // Run all queries in parallel for performance
-    const [
-      totalOrdersResult,
-      pendingCountResult,
-      inProgressCountResult,
-      readyCountResult,
-      deliveredCountResult,
-      totalRevenueResult,
-      pendingRevenueResult,
-      todayDeliveries,
-      overdueOrders,
-      weeklyRevenue,
-      topCustomers,
-      totalCustomersResult,
-      newCustomersResult,
-      stitchingStatsResult,
-      alterationStatsResult,
-    ] = await Promise.all([
-      // Total orders
-      db.queryRow(`SELECT COUNT(*) as count FROM orders WHERE shop_id = $1${addOrderTypeFilter()}`, [shopId]),
-      // Pending count
-      db.queryRow(`SELECT COUNT(*) as count FROM orders WHERE shop_id = $1 AND status = 'pending'${addOrderTypeFilter()}`, [shopId]),
-      // In progress count
-      db.queryRow(`SELECT COUNT(*) as count FROM orders WHERE shop_id = $1 AND status = 'in_progress'${addOrderTypeFilter()}`, [shopId]),
-      // Ready count
-      db.queryRow(`SELECT COUNT(*) as count FROM orders WHERE shop_id = $1 AND status = 'ready'${addOrderTypeFilter()}`, [shopId]),
-      // Delivered count
-      db.queryRow(`SELECT COUNT(*) as count FROM orders WHERE shop_id = $1 AND status = 'delivered'${addOrderTypeFilter()}`, [shopId]),
-      // Total revenue (delivered orders)
+    const [booked, received, outstanding, workload, trend, customers] = await Promise.all([
+      // Orders booked in the period and their value
       db.queryRow(
-        `SELECT COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE shop_id = $1 AND status = 'delivered'${addOrderTypeFilter()}`,
+        `SELECT COUNT(*) AS count, COALESCE(SUM(o.total_amount), 0) AS value
+           FROM orders o WHERE o.shop_id = $1 AND ${CREATED_DAY} >= ${PERIOD_START}${typeFilter}`,
         [shopId]
       ),
-      // Pending revenue
+      // Money actually received in the period (advances + later payments)
       db.queryRow(
-        `SELECT COALESCE(SUM(balance_due), 0) as revenue FROM orders WHERE shop_id = $1 AND status != 'delivered'${addOrderTypeFilter()}`,
+        `SELECT COALESCE(SUM(p.amount), 0) AS amount
+           FROM payments p JOIN orders o ON o.id = p.order_id
+          WHERE p.shop_id = $1 AND p.payment_date >= ${PERIOD_START}${typeFilter}`,
         [shopId]
       ),
-      // Today's deliveries
-      db.queryAll(
-        `SELECT id, customer_id, total_amount, status, delivery_date FROM orders WHERE shop_id = $1 AND delivery_date = $2 AND status != 'delivered'${addOrderTypeFilter()} LIMIT 10`,
-        [shopId, today]
-      ),
-      // Overdue orders
-      db.queryAll(
-        `SELECT id, customer_id, total_amount, status, delivery_date FROM orders WHERE shop_id = $1 AND delivery_date < $2 AND status != 'delivered'${addOrderTypeFilter()} LIMIT 10`,
-        [shopId, today]
-      ),
-      // Weekly revenue
-      db.queryAll(
-        `SELECT DATE(created_at) as date, COALESCE(SUM(total_amount), 0) as revenue, COUNT(*) as orders FROM orders WHERE shop_id = $1 AND created_at >= NOW() - INTERVAL '7 days'${addOrderTypeFilter()} GROUP BY DATE(created_at) ORDER BY date ASC`,
+      // Still to collect on every open order, regardless of period
+      db.queryRow(
+        `SELECT COALESCE(SUM(o.balance_due), 0) AS amount
+           FROM orders o WHERE o.shop_id = $1 AND o.status <> 'delivered'${typeFilter}`,
         [shopId]
       ),
-      // Top customers
+      // Current workload by stage
       db.queryAll(
-        `SELECT c.id, c.name, c.phone, COUNT(o.id) as order_count, COALESCE(SUM(o.total_amount), 0) as total_revenue FROM customers c LEFT JOIN orders o ON o.customer_id = c.id WHERE c.shop_id = $1 GROUP BY c.id, c.name, c.phone ORDER BY total_revenue DESC LIMIT 5`,
+        `SELECT o.status, COUNT(*) AS count FROM orders o WHERE o.shop_id = $1${typeFilter} GROUP BY o.status`,
         [shopId]
       ),
-      // Total customers
-      db.queryRow(`SELECT COUNT(*) as count FROM customers WHERE shop_id = $1`, [shopId]),
-      // New customers this month
-      db.queryRow(
-        `SELECT COUNT(*) as count FROM customers WHERE shop_id = $1 AND created_at >= $2`,
-        [shopId, fromDate]
+      // Payments received per day (per month for the year view)
+      db.queryAll(
+        `SELECT date_trunc('${trendBucket}', p.payment_date)::date AS date, COALESCE(SUM(p.amount), 0) AS revenue
+           FROM payments p JOIN orders o ON o.id = p.order_id
+          WHERE p.shop_id = $1 AND p.payment_date >= ${PERIOD_START}${typeFilter}
+          GROUP BY 1 ORDER BY 1`,
+        [shopId]
       ),
-      // Stitching stats (always unfiltered by order_type, but filtered by period)
       db.queryRow(
-        `SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE shop_id = $1 AND order_type = 'stitching' AND created_at >= $2`,
-        [shopId, fromDate]
-      ),
-      // Alteration stats (always unfiltered by order_type, but filtered by period)
-      db.queryRow(
-        `SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE shop_id = $1 AND order_type = 'alteration' AND created_at >= $2`,
-        [shopId, fromDate]
+        `SELECT COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date >= ${PERIOD_START}) AS new
+           FROM customers WHERE shop_id = $1`,
+        [shopId]
       ),
     ]);
+
+    const countOf = (...statuses) => workload
+      .filter((row) => statuses.includes(row.status))
+      .reduce((sum, row) => sum + parseInt(row.count, 10), 0);
 
     const stats = {
       period,
       order_type: filterOrderType,
-      totalOrders: parseInt(totalOrdersResult?.count || 0),
+      ordersBooked: parseInt(booked?.count || 0, 10),
+      bookedValue: parseFloat(booked?.value || 0),
+      paymentsReceived: parseFloat(received?.amount || 0),
+      outstandingBalance: parseFloat(outstanding?.amount || 0),
+      totalCustomers: parseInt(customers?.total || 0, 10),
+      newCustomers: parseInt(customers?.new || 0, 10),
       orderCounts: {
-        pending: parseInt(pendingCountResult?.count || 0),
-        in_progress: parseInt(inProgressCountResult?.count || 0),
-        ready: parseInt(readyCountResult?.count || 0),
-        delivered: parseInt(deliveredCountResult?.count || 0),
+        pending: countOf('pending', 'new', 'started'),
+        in_progress: countOf('in_progress', 'cutting', 'stitching'),
+        ready: countOf('ready'),
+        delivered: countOf('delivered'),
       },
-      totalRevenue: parseFloat(totalRevenueResult?.revenue || 0),
-      pendingRevenue: parseFloat(pendingRevenueResult?.revenue || 0),
-      totalPayments: parseFloat(totalRevenueResult?.revenue || 0), // Assuming totalPayments is totalRevenue for now
-      totalCustomers: parseInt(totalCustomersResult?.count || 0),
-      newCustomers: parseInt(newCustomersResult?.count || 0),
-      pastDue: overdueOrders.length, // Assuming pastDue is count of overdue orders
-      stitchingStats: {
-        count: parseInt(stitchingStatsResult?.count || 0),
-        revenue: parseFloat(stitchingStatsResult?.revenue || 0),
-      },
-      alterationStats: {
-        count: parseInt(alterationStatsResult?.count || 0),
-        revenue: parseFloat(alterationStatsResult?.revenue || 0),
-      },
-      todayDeliveries,
-      trialsToday: [], // Assuming trialsToday is empty or not implemented
-      overdueOrders,
-      weeklyRevenue: weeklyRevenue.map(row => ({
-        date: row.date,
-        revenue: parseFloat(row.revenue),
-        orders: parseInt(row.orders),
-      })),
-      topCustomers: topCustomers.map(row => ({
-        id: row.id,
-        name: row.name,
-        phone: row.phone,
-        orderCount: parseInt(row.order_count),
-        totalRevenue: parseFloat(row.total_revenue),
-      })),
+      // Kept for older app builds: revenue now means money received in the period
+      totalRevenue: parseFloat(received?.amount || 0),
+      pendingRevenue: parseFloat(outstanding?.amount || 0),
+      weeklyRevenue: trend.map((row) => ({ date: row.date, revenue: parseFloat(row.revenue) })),
     };
 
     logger.info(`Dashboard stats retrieved for shop: ${shopId}`);

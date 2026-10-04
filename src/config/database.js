@@ -3,7 +3,12 @@
  * PostgreSQL connection pool using pg library
  */
 
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// Return DATE columns (delivery_date, payment_date, ...) as plain 'YYYY-MM-DD'.
+// The default converts them to a JS Date at server-local midnight, which shifts
+// the day when serialised to UTC (11 Oct became '2026-10-10T18:30:00Z').
+types.setTypeParser(1082, (value) => value);
 const logger = require('../utils/logger');
 require('./env');
 const { databaseTlsConfig } = require('./databaseTls');

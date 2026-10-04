@@ -121,8 +121,9 @@ exports.createOrder = async (req, res) => {
     // Validate each item has required fields
     let requiresMeasurement = order_type === 'stitching';
     for (const item of items) {
-      if (!item.type || !item.fabric || item.quantity === undefined || item.price === undefined) {
-        return responder.error(res, 400, 'Each item must have type, fabric, quantity, and price');
+      // Fabric is optional: customers often bring their own cloth
+      if (!item.type || item.quantity === undefined || item.price === undefined) {
+        return responder.error(res, 400, 'Each item must have type, quantity, and price');
       }
       if (item.quantity <= 0 || item.price < 0) {
         return responder.error(res, 400, 'Quantity must be positive and price must be non-negative');
