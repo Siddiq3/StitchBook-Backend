@@ -18,9 +18,12 @@ const FREE_TRIAL_DAYS = Math.max(1, Number(process.env.FREE_TRIAL_DAYS || 10));
 const UPGRADE_SESSION_TTL_SECONDS = Math.max(300, Number(process.env.UPGRADE_SESSION_TTL_SECONDS || 7200));
 const upgradeSessionKey = (sessionId) => `${keyPrefix}subscription_upgrade:${sessionId}`;
 
+const { parsePrices } = require('../config/subscriptionPrices');
+const prices = parsePrices(process.env.SUBSCRIPTION_PRICES_JSON);
+
 const PLAN_CONFIG = {
   basic: {
-    amount: 299,
+    amount: prices.basic,
     planType: 'basic',
     duration: 'month',
     durationDays: 30,
@@ -29,7 +32,7 @@ const PLAN_CONFIG = {
     public: true,
   },
   team: {
-    amount: 399,
+    amount: prices.team,
     planType: 'team',
     duration: 'month',
     durationDays: 30,
@@ -38,7 +41,7 @@ const PLAN_CONFIG = {
     public: true,
   },
   pro: {
-    amount: 599,
+    amount: prices.pro,
     planType: 'pro',
     duration: 'month',
     durationDays: 30,
@@ -73,6 +76,25 @@ const ACTIVE_PLAN_KEYS = Object.entries(PLAN_CONFIG)
   .map(([key]) => key);
 
 class SubscriptionService {
+  static getPublicPlans() {
+    return ACTIVE_PLAN_KEYS.map(key => ({ key, ...PLAN_CONFIG[key], currency: 'INR' }));
+  }
+
+  static async getCheckoutAmount(session) {
+    // Durable payment intent wins, including links created before configurable prices.
+    const intent = await db.queryRow('SELECT * FROM billing_intents WHERE id=$1', [session.sessionId]);
+    if (intent) {
+      if (String(intent.user_id) !== String(session.userId) || intent.plan !== session.plan ||
+          !Number.isSafeInteger(Number(intent.amount)) || Number(intent.amount) <= 0) {
+        throw new Error('Checkout intent mismatch');
+      }
+      return Number(intent.amount) / 100;
+    }
+    const amount = session.amount ?? this.getPlanConfig(session.plan).amount;
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('Invalid checkout amount');
+    return amount;
+  }
+
   static getPlanConfig(billingCycle) {
     const plan = PLAN_CONFIG[billingCycle];
     if (!plan) {
@@ -209,6 +231,8 @@ class SubscriptionService {
     const payload = {
       userId,
       plan,
+      amount: this.getPlanConfig(plan).amount,
+      currency: 'INR',
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + UPGRADE_SESSION_TTL_SECONDS * 1000).toISOString(),
     };
@@ -261,6 +285,7 @@ class SubscriptionService {
       throw new Error('Upgrade session has expired');
     }
 
+    const amount = await this.getCheckoutAmount({ ...parsed, sessionId });
     return {
       sessionId,
       userId: parsed.userId,
@@ -268,31 +293,31 @@ class SubscriptionService {
       createdAt: parsed.createdAt,
       expiresAt: parsed.expiresAt,
       cashfreeOrderId: parsed.cashfreeOrderId,
-      amount: parsed.amount,
-      currency: parsed.currency,
+      amount,
+      currency: 'INR',
     };
   }
 
   static async createUpgradeCheckoutOrder(sessionId, customerPhone) {
     const session = await this.validateUpgradeSession(sessionId);
-    const planConfig = this.getPlanConfig(session.plan);
+    const amount = session.amount;
     const user = await UserModel.getUserById(session.userId);
     const order = await createRecoverableOrder({
       id: sessionId, userId: session.userId, plan: session.plan,
-      amount: Math.round(planConfig.amount * 100), receipt: `upgrade_${sessionId}`,
+      amount: Math.round(amount * 100), receipt: `upgrade_${sessionId}`,
       customer: {...user, phone: user.phone || customerPhone},
       returnUrl: `${this.getUpgradePageBaseUrl()}/upgrade/session/${sessionId}?order_id={order_id}`,
     });
-    const updated = {...session, cashfreeOrderId: order.order_id, amount: planConfig.amount, currency:'INR'};
+    const updated = {...session, cashfreeOrderId: order.order_id, amount, currency:'INR'};
     const secondsLeft = Math.max(1, Math.ceil((new Date(session.expiresAt)-Date.now())/1000));
     await redis.setex(upgradeSessionKey(sessionId), secondsLeft, JSON.stringify(updated));
-    return {orderId:order.order_id, paymentSessionId:order.payment_session_id, mode:cashfree.getMode(), amount:planConfig.amount, currency:'INR', plan:session.plan, sessionId};
+    return {orderId:order.order_id, paymentSessionId:order.payment_session_id, mode:cashfree.getMode(), amount, currency:'INR', plan:session.plan, sessionId};
   }
 
   static async verifyUpgradeCheckoutPayment({sessionId, cashfreeOrderId}) {
     const session = await this.validateUpgradeSession(sessionId);
     if (!session.cashfreeOrderId || session.cashfreeOrderId !== cashfreeOrderId) throw new Error('Payment verification failed');
-    const payment = await cashfree.verifiedPayment(cashfreeOrderId, this.getPlanConfig(session.plan).amount);
+    const payment = await cashfree.verifiedPayment(cashfreeOrderId, session.amount);
     const activation = await this.activatePaidPlan({userId:session.userId,plan:session.plan,cashfreePaymentId:String(payment.cf_payment_id)});
     return {...activation,cashfreeOrderId,cashfreePaymentId:String(payment.cf_payment_id)};
   }
@@ -307,8 +332,9 @@ class SubscriptionService {
   static async activateFromWebhookPayment({orderId, paymentId}) {
     const intent = await db.queryRow('SELECT * FROM billing_intents WHERE provider_order_id=$1 OR receipt=$1', [orderId]);
     if (!intent || !orderId?.startsWith('upgrade_')) return {ignored:true,reason:'Not a subscription upgrade order'};
-    const amount = this.getPlanConfig(intent.plan).amount;
-    if (Number(intent.amount) !== Math.round(amount*100)) throw new Error('Checkout amount mismatch');
+    this.getPlanConfig(intent.plan);
+    if (!Number.isSafeInteger(Number(intent.amount)) || Number(intent.amount) <= 0) throw new Error('Checkout amount mismatch');
+    const amount = Number(intent.amount) / 100;
     const payment = await cashfree.verifiedPayment(orderId, amount);
     if (String(payment.cf_payment_id) !== String(paymentId)) throw new Error('Payment reference mismatch');
     return this.activatePaidPlan({userId:intent.user_id,plan:intent.plan,cashfreePaymentId:String(payment.cf_payment_id)});

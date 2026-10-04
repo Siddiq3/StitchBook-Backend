@@ -74,7 +74,7 @@ const cashfree = require('../src/services/cashfree');
 const db = require('../src/config/database');
 test('checkout verification activates only the server session plan and is idempotent', async t => {
   const {updates} = setupPaymentStubs();
-  t.mock.method(SubscriptionService,'validateUpgradeSession',async()=>({userId:'u1',plan:'basic',cashfreeOrderId:'upgrade_s1'}));
+  t.mock.method(SubscriptionService,'validateUpgradeSession',async()=>({userId:'u1',plan:'basic',amount:299,cashfreeOrderId:'upgrade_s1'}));
   t.mock.method(cashfree,'verifiedPayment',async(id,amount)=>{assert.equal(id,'upgrade_s1');assert.equal(amount,299);return {cf_payment_id:'1'};});
   const request={sessionId:'s1',cashfreeOrderId:'upgrade_s1',plan:'annual'};
   const result=await SubscriptionService.verifyUpgradeCheckoutPayment(request);
@@ -83,7 +83,7 @@ test('checkout verification activates only the server session plan and is idempo
 });
 test('checkout rejects a foreign order before calling Cashfree', async t => {
   setupPaymentStubs();
-  t.mock.method(SubscriptionService,'validateUpgradeSession',async()=>({userId:'u1',plan:'basic',cashfreeOrderId:'upgrade_s1'}));
+  t.mock.method(SubscriptionService,'validateUpgradeSession',async()=>({userId:'u1',plan:'basic',amount:299,cashfreeOrderId:'upgrade_s1'}));
   const verify=t.mock.method(cashfree,'verifiedPayment',async()=>({cf_payment_id:'1'}));
   await assert.rejects(SubscriptionService.verifyUpgradeCheckoutPayment({sessionId:'s1',cashfreeOrderId:'foreign'}),/Payment verification failed/);
   assert.equal(verify.mock.callCount(),0);
@@ -149,4 +149,49 @@ test('Cashfree webhook verifies raw body and timestamp and ignores failed paymen
   assert.equal(activate.mock.callCount(),0);
   assert.equal((await call('SUCCESS')).statusCode,200);
   assert.equal(activate.mock.callCount(),1);
+});
+
+
+test('webhook verifies the persisted charged amount after the catalog price changes', async t => {
+  setupPaymentStubs();
+  t.mock.method(db, 'queryRow', async () => ({ user_id:'u1', plan:'basic', amount:24950 }));
+  t.mock.method(cashfree, 'verifiedPayment', async (orderId, amount) => {
+    assert.equal(amount, 249.5);
+    return { cf_payment_id:'old-price-payment' };
+  });
+  await SubscriptionService.activateFromWebhookPayment({orderId:'upgrade_old',paymentId:'old-price-payment'});
+});
+
+test('checkout uses its stored quote instead of the latest catalog price', async t => {
+  setupPaymentStubs();
+  t.mock.method(SubscriptionService, 'validateUpgradeSession', async () => ({ userId:'u1',plan:'basic',amount:249.5,cashfreeOrderId:'upgrade_old' }));
+  t.mock.method(cashfree, 'verifiedPayment', async (id, amount) => {
+    assert.equal(amount,249.5);
+    return {cf_payment_id:'old-price-checkout'};
+  });
+  await SubscriptionService.verifyUpgradeCheckoutPayment({sessionId:'old',cashfreeOrderId:'upgrade_old'});
+});
+
+test('persisted intent survives price changes and cannot change owner or plan', async t => {
+  t.mock.method(db,'queryRow',async()=>({user_id:'u1',plan:'basic',amount:24950}));
+  assert.equal(await SubscriptionService.getCheckoutAmount({sessionId:'old',userId:'u1',plan:'basic',amount:299}),249.5);
+  await assert.rejects(SubscriptionService.getCheckoutAmount({sessionId:'old',userId:'other',plan:'basic'}),/mismatch/);
+  await assert.rejects(SubscriptionService.getCheckoutAmount({sessionId:'old',userId:'u1',plan:'pro'}),/mismatch/);
+});
+
+test('public catalog exposes only the three active INR monthly plans', () => {
+  assert.deepEqual(SubscriptionService.getPublicPlans().map(({key,currency,duration})=>({key,currency,duration})), ['basic','team','pro'].map(key=>({key,currency:'INR',duration:'month'})));
+});
+
+test('new upgrade session snapshots its price before a catalog change', async t => {
+  setupPaymentStubs();
+  const store = new Map();
+  t.mock.method(redisClient, 'setex', async (key, ttl, value) => { store.set(key,value); });
+  t.mock.method(redisClient, 'get', async key => store.get(key));
+  t.mock.method(db, 'queryRow', async () => null);
+  const quote = await SubscriptionService.createUpgradeSession('u1','basic');
+  t.mock.method(SubscriptionService, 'getPlanConfig', () => ({amount:799}));
+  const session = await SubscriptionService.validateUpgradeSession(quote.sessionId);
+  assert.equal(session.amount,299);
+  assert.equal(session.currency,'INR');
 });
