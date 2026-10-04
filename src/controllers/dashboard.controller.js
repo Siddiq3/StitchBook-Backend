@@ -5,6 +5,7 @@
 
 const AuthorizationService = require('../services/authorization.service');
 const DashboardCacheService = require('../services/dashboardCache.service');
+const SubscriptionService = require('../services/subscription.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 const db = require('../config/database');
@@ -142,10 +143,34 @@ const loadDashboardStats = async ({ shopId, period, orderType }) => {
  */
 exports.getDashboardStats = async (req, res) => {
   try {
-    const requestedPeriod = String(req.query.period || 'month').toLowerCase();
-    const period = VALID_PERIODS.has(requestedPeriod) ? requestedPeriod : 'month';
+    const subscription = await SubscriptionService.getSubscriptionForActor(req.user);
+    if (!subscription?.canUseApp) {
+      return responder.error(res, 402, 'Your StitchBook plan is not active.', {
+        code: 'SUBSCRIPTION_REQUIRED',
+        status: subscription?.status || 'trial_expired',
+      });
+    }
+
+    const features = subscription.features || {};
+    const reportLevel = features.reportLevel || (features.hasReports ? 'full' : 'none');
+    if (reportLevel === 'none') {
+      return responder.error(res, 403, 'Reports are not included in your current plan.', {
+        code: 'REPORTS_PLAN_REQUIRED',
+        planType: subscription.planType,
+        recommendedPlan: 'basic',
+      });
+    }
+
+    const allowedPeriods = Array.isArray(features.reportPeriods) && features.reportPeriods.length
+      ? features.reportPeriods.filter((value) => VALID_PERIODS.has(value))
+      : ['month'];
+    const requestedPeriod = String(req.query.period || allowedPeriods[0] || 'month').toLowerCase();
+    const period = allowedPeriods.includes(requestedPeriod) ? requestedPeriod : (allowedPeriods[0] || 'month');
+
     const requestedType = String(req.query.order_type || '').toLowerCase();
-    const orderType = VALID_ORDER_TYPES.has(requestedType) ? requestedType : null;
+    const orderType = features.reportOrderTypeFilter && VALID_ORDER_TYPES.has(requestedType)
+      ? requestedType
+      : null;
 
     const shop = await AuthorizationService.getUserShop(req.user.id);
 
@@ -160,7 +185,18 @@ exports.getDashboardStats = async (req, res) => {
       })
     );
 
-    responder.success(res, 200, 'Dashboard stats retrieved', stats);
+    const response = {
+      ...stats,
+      reportLevel,
+      reportPeriods: allowedPeriods,
+      reportOrderTypeFilter: Boolean(features.reportOrderTypeFilter),
+    };
+
+    if (reportLevel === 'basic') {
+      response.weeklyRevenue = [];
+    }
+
+    responder.success(res, 200, 'Dashboard stats retrieved', response);
   } catch (error) {
     logger.error('Get dashboard stats error:', error.message);
     responder.error(res, 500, 'Failed to get dashboard stats', error.message);
