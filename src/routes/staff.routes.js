@@ -9,9 +9,15 @@ const StaffController = require('../controllers/staff.controller');
 const authMiddleware = require('../middleware/auth');
 const subscriptionGate = require('../middleware/subscriptionGate');
 const { requirePermission } = require('../middleware/permissions');
+const { requirePlanFeature } = require('../middleware/planFeatures');
 
 // All routes require authentication
 router.use(authMiddleware);
+router.use(requirePlanFeature('hasStaffManagement', {
+  code: 'STAFF_PLAN_REQUIRED',
+  message: 'Staff management is available on Team and Pro plans.',
+  recommendedPlan: 'team',
+}));
 router.use(subscriptionGate);
 
 /**
