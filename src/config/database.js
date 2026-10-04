@@ -3,24 +3,21 @@
  * PostgreSQL connection pool using pg library
  */
 
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// Return DATE columns (delivery_date, payment_date, ...) as plain 'YYYY-MM-DD'.
+// The default converts them to a JS Date at server-local midnight, which shifts
+// the day when serialised to UTC (11 Oct became '2026-10-10T18:30:00Z').
+types.setTypeParser(1082, (value) => value);
 const logger = require('../utils/logger');
 require('./env');
 const { databaseTlsConfig } = require('./databaseTls');
 
-const boundedInt = (value, fallback, min, max) => {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
-};
-
-const SLOW_QUERY_MS = boundedInt(process.env.SLOW_QUERY_MS, 250, 50, 5000);
-
 const pool = new Pool({
   ...databaseTlsConfig(),
-  max: boundedInt(process.env.DB_POOL_MAX, 5, 1, 20),
-  idleTimeoutMillis: boundedInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 30000, 5000, 120000),
-  connectionTimeoutMillis: boundedInt(process.env.DB_CONNECT_TIMEOUT_MS, 10000, 1000, 30000),
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 // Test connection
@@ -43,11 +40,7 @@ const query = async (text, params) => {
   try {
     const result = await pool.query(text, params);
     const duration = Date.now() - start;
-    if (duration >= SLOW_QUERY_MS) {
-      logger.warn('Slow database query', { durationMs: duration });
-    } else {
-      logger.debug('Database query completed', { durationMs: duration });
-    }
+    logger.info(`Executed query in ${duration}ms`);
     return result;
   } catch (error) {
     logger.error('Database query error:', error);
