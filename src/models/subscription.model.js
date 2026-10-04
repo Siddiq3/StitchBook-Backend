@@ -369,8 +369,11 @@ class SubscriptionModel {
         prioritySupport: false,
       },
       trial: {
-        ...sharedPaid,
+        maxCustomers: 500,
+        maxOrders: 200,
         maxStaff: 2,
+        hasPortfolio: true,
+        hasReports: true,
         hasStaffManagement: true,
         reportLevel: 'advanced',
         reportPeriods: ['today', 'week', 'month', 'year'],
