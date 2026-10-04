@@ -7,6 +7,7 @@ const express = require('express');
 const activityController = require('../controllers/activity.controller');
 const authMiddleware = require('../middleware/auth');
 const subscriptionGate = require('../middleware/subscriptionGate');
+const { requirePermission } = require('../middleware/permissions');
 
 const router = express.Router();
 
@@ -15,9 +16,9 @@ router.use(authMiddleware);
 router.use(subscriptionGate);
 
 // GET /activity/order/:orderId - Get activity logs for an order
-router.get('/order/:orderId', activityController.getActivityByOrder);
+router.get('/order/:orderId', requirePermission('orders:read'), activityController.getActivityByOrder);
 
 // POST /activity/order/:orderId - Add a comment/note
-router.post('/order/:orderId', activityController.addActivityNote);
+router.post('/order/:orderId', requirePermission('orders:read'), activityController.addActivityNote);
 
 module.exports = router;

@@ -8,6 +8,7 @@ const router = express.Router();
 const InvoiceController = require('../controllers/invoice.controller');
 const authMiddleware = require('../middleware/auth');
 const subscriptionGate = require('../middleware/subscriptionGate');
+const { requirePermission } = require('../middleware/permissions');
 
 // All routes require authentication
 router.use(authMiddleware);
@@ -74,7 +75,7 @@ router.use(subscriptionGate);
  *       400:
  *         description: Validation error
  */
-router.post('/', InvoiceController.createInvoice);
+router.post('/', requirePermission('payments:write'), InvoiceController.createInvoice);
 
 /**
  * @swagger
@@ -110,7 +111,7 @@ router.post('/', InvoiceController.createInvoice);
  *       200:
  *         description: Invoices retrieved successfully
  */
-router.get('/', InvoiceController.getInvoicesByShop);
+router.get('/', requirePermission('payments:read'), InvoiceController.getInvoicesByShop);
 
 /**
  * @swagger
@@ -140,11 +141,11 @@ router.get('/', InvoiceController.getInvoicesByShop);
  *       200:
  *         description: Invoice statistics retrieved successfully
  */
-router.get('/stats', InvoiceController.getInvoiceStats);
+router.get('/stats', requirePermission('payments:read'), InvoiceController.getInvoiceStats);
 
-router.get('/order/:orderId', InvoiceController.getInvoiceByOrder);
+router.get('/order/:orderId', requirePermission('payments:read'), InvoiceController.getInvoiceByOrder);
 
-router.post('/order/:orderId/whatsapp', InvoiceController.getOrderInvoiceWhatsApp);
+router.post('/order/:orderId/whatsapp', requirePermission('payments:read'), InvoiceController.getOrderInvoiceWhatsApp);
 
 /**
  * @swagger
@@ -166,7 +167,7 @@ router.post('/order/:orderId/whatsapp', InvoiceController.getOrderInvoiceWhatsAp
  *       404:
  *         description: Invoice not found
  */
-router.get('/number/:invoiceNumber', InvoiceController.getInvoiceByNumber);
+router.get('/number/:invoiceNumber', requirePermission('payments:read'), InvoiceController.getInvoiceByNumber);
 
 /**
  * @swagger
@@ -188,7 +189,7 @@ router.get('/number/:invoiceNumber', InvoiceController.getInvoiceByNumber);
  *       404:
  *         description: Invoice not found
  */
-router.get('/:id', InvoiceController.getInvoiceById);
+router.get('/:id', requirePermission('payments:read'), InvoiceController.getInvoiceById);
 
 /**
  * @swagger
@@ -243,7 +244,7 @@ router.get('/:id', InvoiceController.getInvoiceById);
  *       404:
  *         description: Invoice not found
  */
-router.put('/:id', InvoiceController.updateInvoice);
+router.put('/:id', requirePermission('payments:write'), InvoiceController.updateInvoice);
 
 /**
  * @swagger
@@ -278,7 +279,7 @@ router.put('/:id', InvoiceController.updateInvoice);
  *       404:
  *         description: Invoice not found
  */
-router.put('/:id/payment', InvoiceController.recordPayment);
+router.put('/:id/payment', requirePermission('payments:write'), InvoiceController.recordPayment);
 
 /**
  * @swagger
@@ -300,6 +301,6 @@ router.put('/:id/payment', InvoiceController.recordPayment);
  *       404:
  *         description: Invoice not found
  */
-router.delete('/:id', InvoiceController.deleteInvoice);
+router.delete('/:id', requirePermission('payments:write'), InvoiceController.deleteInvoice);
 
 module.exports = router;

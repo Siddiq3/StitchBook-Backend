@@ -30,6 +30,7 @@ router.get('/', requirePermission('shop:read'), shopController.getShop);
 router.put('/', requirePermission('shop:write'), shopController.updateShop);
 
 // DELETE /shop - Delete authenticated user's shop
-router.delete('/', requirePermission('shop:write'), shopController.deleteShop);
+// Only the owner (wildcard permission) may delete the shop; managers have shop:write
+router.delete('/', requirePermission('shop:delete'), shopController.deleteShop);
 
 module.exports = router;

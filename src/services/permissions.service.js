@@ -37,6 +37,14 @@ const ROLE_PERMISSIONS = {
   helper: ['orders:read'],
 };
 
+// Every staff member with app access can see their own shop's basic details
+// (name, phone) and the shop's account status; without it the app cannot load.
+Object.keys(ROLE_PERMISSIONS)
+  .filter((role) => role !== 'owner')
+  .forEach((role) => {
+    if (!ROLE_PERMISSIONS[role].includes('shop:read')) ROLE_PERMISSIONS[role].push('shop:read');
+  });
+
 const normalizeRole = (role) => {
   if (!role) return 'stitcher';
   const value = String(role).toLowerCase();

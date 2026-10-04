@@ -4,12 +4,10 @@
  * Implements multi-tenant security checks
  */
 
-const ShopModel = require('../models/shop.model');
-const UserModel = require('../models/user.model');
-const StaffModel = require('../models/staff.model');
 const CustomerModel = require('../models/customer.model');
 const OrderModel = require('../models/order.model');
 const MeasurementModel = require('../models/measurement.model');
+const db = require('../config/database');
 const logger = require('../utils/logger');
 
 class AuthorizationService {
@@ -22,23 +20,8 @@ class AuthorizationService {
    */
   static async verifyCustomerOwnership(userId, customerId) {
     try {
-      // Get user's shop
-      const shop = await ShopModel.getShopByUserId(userId);
-      let effectiveShop = shop;
-
-      if (!effectiveShop) {
-        const user = await UserModel.getUserById(userId);
-        if (user?.shop_id) {
-          effectiveShop = await ShopModel.getShopById(user.shop_id);
-        }
-      }
-
-      if (!effectiveShop) {
-        const staff = await StaffModel.getStaffByUserId(userId);
-        if (staff?.shop_id) {
-          effectiveShop = await ShopModel.getShopById(staff.shop_id);
-        }
-      }
+      // Owned shop or active staff shop, in one query (see getUserShop)
+      const effectiveShop = await this.getUserShop(userId).catch(() => null);
 
       if (!effectiveShop) {
         logger.warn(`User ${userId} has no shop access`);
@@ -73,23 +56,8 @@ class AuthorizationService {
    */
   static async verifyOrderOwnership(userId, orderId) {
     try {
-      // Get user's shop
-      const shop = await ShopModel.getShopByUserId(userId);
-      let effectiveShop = shop;
-
-      if (!effectiveShop) {
-        const user = await UserModel.getUserById(userId);
-        if (user?.shop_id) {
-          effectiveShop = await ShopModel.getShopById(user.shop_id);
-        }
-      }
-
-      if (!effectiveShop) {
-        const staff = await StaffModel.getStaffByUserId(userId);
-        if (staff?.shop_id) {
-          effectiveShop = await ShopModel.getShopById(staff.shop_id);
-        }
-      }
+      // Owned shop or active staff shop, in one query (see getUserShop)
+      const effectiveShop = await this.getUserShop(userId).catch(() => null);
 
       if (!effectiveShop) {
         logger.warn(`User ${userId} has no shop access`);
@@ -124,23 +92,8 @@ class AuthorizationService {
    */
   static async verifyMeasurementOwnership(userId, measurementId) {
     try {
-      // Get user's shop
-      const shop = await ShopModel.getShopByUserId(userId);
-      let effectiveShop = shop;
-
-      if (!effectiveShop) {
-        const user = await UserModel.getUserById(userId);
-        if (user?.shop_id) {
-          effectiveShop = await ShopModel.getShopById(user.shop_id);
-        }
-      }
-
-      if (!effectiveShop) {
-        const staff = await StaffModel.getStaffByUserId(userId);
-        if (staff?.shop_id) {
-          effectiveShop = await ShopModel.getShopById(staff.shop_id);
-        }
-      }
+      // Owned shop or active staff shop, in one query (see getUserShop)
+      const effectiveShop = await this.getUserShop(userId).catch(() => null);
 
       if (!effectiveShop) {
         logger.warn(`User ${userId} has no shop access`);
@@ -176,21 +129,22 @@ class AuthorizationService {
    */
   static async getUserShop(userId) {
     try {
-      const shop = await ShopModel.getShopByUserId(userId);
+      // One query: the shop the user owns, else the shop of their *active*
+      // staff record. Deliberately ignores users.shop_id, which survives staff
+      // removal and would hand a former employee their old shop.
+      const shop = await db.queryRow(`
+        SELECT s.* FROM (
+          SELECT sh.*, 0 AS priority FROM shops sh WHERE sh.user_id = $1
+          UNION ALL
+          SELECT sh.*, 1 AS priority FROM staff st JOIN shops sh ON sh.id = st.shop_id
+          WHERE st.user_id = $1 AND st.is_active = true
+        ) s
+        ORDER BY s.priority
+        LIMIT 1;
+      `, [userId]);
       if (shop) {
+        delete shop.priority;
         return shop;
-      }
-
-      const user = await UserModel.getUserById(userId);
-      if (user?.shop_id) {
-        const staffShop = await ShopModel.getShopById(user.shop_id);
-        if (staffShop) return staffShop;
-      }
-
-      const staff = await StaffModel.getStaffByUserId(userId);
-      if (staff?.shop_id) {
-        const staffShop = await ShopModel.getShopById(staff.shop_id);
-        if (staffShop) return staffShop;
       }
 
       throw new Error('Shop not found. Please create a shop first.');

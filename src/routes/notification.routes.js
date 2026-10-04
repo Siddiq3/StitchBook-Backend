@@ -8,6 +8,7 @@ const router = express.Router();
 const NotificationController = require('../controllers/notification.controller');
 const authMiddleware = require('../middleware/auth');
 const subscriptionGate = require('../middleware/subscriptionGate');
+const { requirePermission } = require('../middleware/permissions');
 
 // All routes require authentication
 router.use(authMiddleware);
@@ -51,7 +52,7 @@ router.use(subscriptionGate);
  *       400:
  *         description: Validation error
  */
-router.post('/', NotificationController.createNotification);
+router.post('/', requirePermission('shop:write'), NotificationController.createNotification);
 
 /**
  * @swagger
@@ -213,6 +214,6 @@ router.put('/read-all', NotificationController.markAllAsRead);
  *       404:
  *         description: Notification not found
  */
-router.delete('/:id', NotificationController.deleteNotification);
+router.delete('/:id', requirePermission('shop:write'), NotificationController.deleteNotification);
 
 module.exports = router;

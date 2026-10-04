@@ -19,7 +19,8 @@ router.post('/upgrade-session/:sessionId/verify', subscriptionController.verifyU
 router.use(authMiddleware);
 
 router.post('/create', requirePermission('shop:write'), subscriptionController.createSubscription);
-router.post('/create-upgrade-session', requirePermission('shop:read'), subscriptionController.createUpgradeSession);
+// Billing is the owner's decision; staff only need to read status
+router.post('/create-upgrade-session', requirePermission('billing:manage'), subscriptionController.createUpgradeSession);
 router.get('/status', requirePermission('shop:read'), subscriptionController.getSubscriptionStatus);
 router.post('/check-active', requirePermission('shop:read'), subscriptionController.checkActive);
 

@@ -139,6 +139,19 @@ class InvoiceController {
         });
       }
 
+      // Linked records must belong to this shop too, not just shop_id
+      const userId = req.user.id;
+      try {
+        if (order_id) await AuthorizationService.verifyOrderOwnership(userId, order_id);
+        if (customer_id) await AuthorizationService.verifyCustomerOwnership(userId, customer_id);
+      } catch {
+        return res.status(403).json({
+          success: false,
+          message: 'Order or customer does not belong to your shop',
+          error: { code: 'FORBIDDEN', details: {} }
+        });
+      }
+
       const invoice = await InvoiceModel.createInvoice({
         shop_id: requestedShopId,
         order_id,

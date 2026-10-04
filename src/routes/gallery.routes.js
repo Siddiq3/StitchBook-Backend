@@ -8,6 +8,7 @@ const router = express.Router();
 const GalleryController = require('../controllers/gallery.controller');
 const authMiddleware = require('../middleware/auth');
 const subscriptionGate = require('../middleware/subscriptionGate');
+const { requirePermission } = require('../middleware/permissions');
 
 // All routes require authentication
 router.use(authMiddleware);
@@ -55,7 +56,7 @@ router.use(subscriptionGate);
  *       400:
  *         description: Validation error
  */
-router.post('/', GalleryController.createGalleryItem);
+router.post('/', requirePermission('shop:write'), GalleryController.createGalleryItem);
 
 /**
  * @swagger
@@ -91,7 +92,7 @@ router.post('/', GalleryController.createGalleryItem);
  *       200:
  *         description: Gallery items retrieved successfully
  */
-router.get('/', GalleryController.getGalleryByShop);
+router.get('/', requirePermission('shop:read'), GalleryController.getGalleryByShop);
 
 /**
  * @swagger
@@ -111,7 +112,7 @@ router.get('/', GalleryController.getGalleryByShop);
  *       200:
  *         description: Categories retrieved successfully
  */
-router.get('/categories', GalleryController.getCategories);
+router.get('/categories', requirePermission('shop:read'), GalleryController.getCategories);
 
 /**
  * @swagger
@@ -133,7 +134,7 @@ router.get('/categories', GalleryController.getCategories);
  *       404:
  *         description: Gallery item not found
  */
-router.get('/:id', GalleryController.getGalleryById);
+router.get('/:id', requirePermission('shop:read'), GalleryController.getGalleryById);
 
 /**
  * @swagger
@@ -178,7 +179,9 @@ router.get('/:id', GalleryController.getGalleryById);
  *       404:
  *         description: Gallery item not found
  */
-router.put('/:id', GalleryController.updateGalleryItem);
+// Must be registered before '/:id' or 'reorder' is treated as an id
+router.put('/reorder', requirePermission('shop:write'), GalleryController.reorderItems);
+router.put('/:id', requirePermission('shop:write'), GalleryController.updateGalleryItem);
 
 /**
  * @swagger
@@ -200,7 +203,7 @@ router.put('/:id', GalleryController.updateGalleryItem);
  *       404:
  *         description: Gallery item not found
  */
-router.delete('/:id', GalleryController.deleteGalleryItem);
+router.delete('/:id', requirePermission('shop:write'), GalleryController.deleteGalleryItem);
 
 /**
  * @swagger
@@ -235,6 +238,5 @@ router.delete('/:id', GalleryController.deleteGalleryItem);
  *       200:
  *         description: Gallery items reordered successfully
  */
-router.put('/reorder', GalleryController.reorderItems);
 
 module.exports = router;
