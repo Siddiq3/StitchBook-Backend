@@ -8,7 +8,7 @@ const subscriptionGate = async (req, res, next) => {
       return next();
     }
 
-    const subscription = await SubscriptionService.getSubscriptionForActor(req.user);
+    const subscription = req.subscription || await SubscriptionService.getSubscriptionForActor(req.user);
 
     if (subscription?.canUseApp) {
       if (
