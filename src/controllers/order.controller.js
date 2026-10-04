@@ -36,6 +36,29 @@ const getAssignedId = (item = {}, role) =>
     ? item.cutter_staff_id || item.cutterStaffId || item.assigned_cutter_id || null
     : item.stitcher_staff_id || item.stitcherStaffId || item.assigned_stitcher_id || null;
 
+const includesStaffAssignment = (items = []) =>
+  Array.isArray(items) && items.some((item) =>
+    Boolean(
+      getAssignedId(item, 'cutter') ||
+      getAssignedId(item, 'stitcher') ||
+      getAssignedName(item, 'cutter') ||
+      getAssignedName(item, 'stitcher')
+    )
+  );
+
+const rejectStaffAssignmentWithoutPlan = (req, res, items) => {
+  if (!includesStaffAssignment(items) || req.subscription?.features?.hasStaffManagement) {
+    return false;
+  }
+
+  responder.error(res, 402, 'Staff assignments are available on Team and Pro plans.', {
+    code: 'STAFF_PLAN_REQUIRED',
+    planType: req.subscription?.planType || 'basic',
+    recommendedPlan: 'team',
+  });
+  return true;
+};
+
 const createStaffAssignmentLogs = async ({ orderId, shopId, userId, previousItems = [], nextItems = [] }) => {
   const roles = [
     { key: 'cutter', label: 'Cutter' },
@@ -142,6 +165,8 @@ exports.createOrder = async (req, res) => {
     if (measurement_snapshot && typeof measurement_snapshot !== 'object') {
       return responder.error(res, 400, 'Measurement snapshot must be an object or array of objects');
     }
+
+    if (rejectStaffAssignmentWithoutPlan(req, res, items)) return;
 
     // Get user's shop
     const shop = await AuthorizationService.getUserShop(userId);
@@ -250,6 +275,8 @@ exports.updateOrder = async (req, res) => {
     if (updateData.order_type && !['stitching', 'alteration'].includes(updateData.order_type)) {
       return responder.error(res, 400, 'Order type must be either stitching or alteration');
     }
+
+    if (Array.isArray(updateData.items) && rejectStaffAssignmentWithoutPlan(req, res, updateData.items)) return;
 
     // Verify ownership
     const existingOrder = await AuthorizationService.verifyOrderOwnership(userId, orderId);

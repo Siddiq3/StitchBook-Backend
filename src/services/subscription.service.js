@@ -26,6 +26,7 @@ const PLAN_CONFIG = {
     durationDays: 30,
     label: 'Basic',
     staffLimit: 0,
+    public: true,
   },
   team: {
     amount: 399,
@@ -34,6 +35,7 @@ const PLAN_CONFIG = {
     durationDays: 30,
     label: 'Team',
     staffLimit: 2,
+    public: true,
   },
   pro: {
     amount: 599,
@@ -42,7 +44,10 @@ const PLAN_CONFIG = {
     durationDays: 30,
     label: 'Pro',
     staffLimit: 5,
+    public: true,
   },
+  // Legacy aliases remain readable so existing paid records continue to resolve,
+  // but new checkout sessions cannot be created for them.
   monthly: {
     amount: 299,
     planType: 'basic',
@@ -50,6 +55,7 @@ const PLAN_CONFIG = {
     durationDays: 30,
     label: 'Basic',
     staffLimit: 0,
+    public: false,
   },
   annual: {
     amount: 1800,
@@ -58,10 +64,13 @@ const PLAN_CONFIG = {
     durationDays: 365,
     label: 'Annual Pro',
     staffLimit: 5,
+    public: false,
   },
 };
 
-const ACTIVE_PLAN_KEYS = Object.keys(PLAN_CONFIG);
+const ACTIVE_PLAN_KEYS = Object.entries(PLAN_CONFIG)
+  .filter(([, config]) => config.public)
+  .map(([key]) => key);
 
 class SubscriptionService {
   static getPlanConfig(billingCycle) {
