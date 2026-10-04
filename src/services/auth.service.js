@@ -151,7 +151,8 @@ const formatUser = async (user) => {
     email: user.email,
     name: user.name,
     avatar: user.avatar,
-    shopId: ownedShop?.id || staff?.shop_id || user.shop_id,
+    // users.shop_id is not trusted (left behind when staff are removed)
+    shopId: ownedShop?.id || staff?.shop_id || null,
     authProvider: user.auth_provider,
     role,
     staffId: staff?.id || null,
@@ -230,6 +231,34 @@ class AuthService {
     user = await linkStaffEmailIfAllowed(user);
     user = await linkStaffAccountIfAllowed(user);
     return createLoginResponse(user, meta);
+  }
+
+  /**
+   * Owner-created staff login. Same password rules as owners; the staff member
+   * signs in through the normal login screen and can reset the password with
+   * the forgot-password OTP. An email that already has an account is refused:
+   * an owner must never be able to set the password of someone else's account.
+   */
+  static async createStaffLoginUser({ name, email, password }) {
+    const cleanEmail = normalizeEmail(email);
+    if (!EMAIL_RE.test(cleanEmail) || cleanEmail.length > 254) {
+      const error = new Error('Enter a valid email address');
+      error.code = 'INVALID_EMAIL';
+      throw error;
+    }
+    const cleanPassword = validateNewPassword(password);
+    if (await UserModel.getUserByEmail(cleanEmail)) {
+      const error = new Error('This email already has a StitchBook account. Use a different email.');
+      error.code = 'ACCOUNT_ALREADY_EXISTS';
+      throw error;
+    }
+    const passwordHash = await bcrypt.hash(cleanPassword, 12);
+    return UserModel.createPasswordUser({
+      name: String(name || '').trim(),
+      email: cleanEmail,
+      phone: null,
+      passwordHash,
+    });
   }
 
   static async loginWithPassword(identifier, password, meta = {}) {

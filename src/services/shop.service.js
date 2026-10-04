@@ -41,8 +41,10 @@ class ShopService {
    */
   static async getShopByUser(userId) {
     try {
-      const shop = await ShopModel.getShopByUserId(userId);
-      
+      // Owners get their shop; active staff get the shop they work for
+      const shop = await ShopModel.getShopByUserId(userId)
+        || await require('./authorization.service').getUserShop(userId).catch(() => null);
+
       if (!shop) {
         const error = new Error('Shop not found');
         error.code = 'SHOP_NOT_FOUND';

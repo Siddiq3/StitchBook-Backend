@@ -18,10 +18,11 @@ function load(file, imports) {
   return module.exports;
 }
 
-function shopController(getShopByUserId) {
+function shopController(getShopByUserId, staffShop = null) {
   const logger = { info() {}, error() {} };
   const service = load('services/shop.service.js', {
     '../models/shop.model': { getShopByUserId },
+    './authorization.service': { getUserShop: async () => { if (!staffShop) throw new Error('Shop not found'); return staffShop; } },
     '../utils/logger': logger,
   });
   return load('controllers/shop.controller.js', {
@@ -65,4 +66,11 @@ test('database failure does not masquerade as a missing shop', async () => {
   assert.equal(res.statusCode, 500);
   assert.equal(res.body.message, 'Failed to load shop');
   assert.equal(res.body.error, null);
+});
+
+test('active staff receive the shop they work for', async () => {
+  const shop = { id: 3, user_id: 1, name: 'Royal Tailors' };
+  const res = await getShop(shopController(async () => null, shop));
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data, shop);
 });

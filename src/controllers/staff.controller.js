@@ -5,6 +5,8 @@
 
 const StaffModel = require('../models/staff.model');
 const AuthorizationService = require('../services/authorization.service');
+const db = require('../config/database');
+const AuthService = require('../services/auth.service');
 const SubscriptionModel = require('../models/subscription.model');
 const { parsePagination } = require('../utils/pagination');
 const logger = require('../utils/logger');
@@ -156,7 +158,7 @@ class StaffController {
       const { 
         shop_id, name, phone, email, role, salary, commission_rate, 
         payment_type, pay_rate, aadhar_number, address, photo_url, is_active, joined_date,
-        can_login, access_role, permissions
+        can_login, access_role, permissions, password
       } = req.body;
 
       // Validation
@@ -231,8 +233,36 @@ class StaffController {
         }
       }
 
-      const staff = await StaffModel.createStaff({
+      // Optional app login: the owner sets an email + password for this staff member
+      let loginUser = null;
+      if (password !== undefined && password !== null && password !== '') {
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: 'Email is required to give staff an app login',
+            error: { code: 'VALIDATION_ERROR', details: {} }
+          });
+        }
+        try {
+          loginUser = await AuthService.createStaffLoginUser({ name, email, password });
+        } catch (loginError) {
+          const conflict = loginError.code === 'ACCOUNT_ALREADY_EXISTS';
+          if (conflict || ['INVALID_EMAIL', 'INVALID_PASSWORD'].includes(loginError.code)) {
+            return res.status(conflict ? 409 : 400).json({
+              success: false,
+              message: loginError.message,
+              error: { code: loginError.code, details: {} }
+            });
+          }
+          throw loginError;
+        }
+      }
+
+      let staff;
+      try {
+        staff = await StaffModel.createStaff({
         shop_id: shop.id,
+        user_id: loginUser?.id || null,
         name,
         phone,
         email,
@@ -246,10 +276,15 @@ class StaffController {
         photo_url,
         is_active,
         joined_date,
-        can_login,
+        can_login: loginUser ? true : can_login,
         access_role,
         permissions
-      });
+        });
+      } catch (staffError) {
+        // Don't leave an orphan login account behind if the staff row failed
+        if (loginUser) await db.query('DELETE FROM users WHERE id = $1', [loginUser.id]).catch(() => {});
+        throw staffError;
+      }
 
       return res.status(201).json({
         success: true,
