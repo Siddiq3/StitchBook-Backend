@@ -59,7 +59,7 @@ const loadDashboardStats = async ({ shopId, period, orderType }) => {
        ),
        workload AS (
          SELECT
-           COUNT(*) FILTER (WHERE o.status IN ('pending', 'new', 'started'))::int AS pending_count,
+           COUNT(*) FILTER (WHERE o.status = 'pending')::int AS pending_count,
            COUNT(*) FILTER (WHERE o.status IN ('in_progress', 'cutting', 'stitching'))::int AS in_progress_count,
            COUNT(*) FILTER (WHERE o.status = 'ready')::int AS ready_count,
            COUNT(*) FILTER (WHERE o.status = 'delivered')::int AS delivered_count

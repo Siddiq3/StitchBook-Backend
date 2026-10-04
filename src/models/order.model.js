@@ -316,7 +316,9 @@ class OrderModel {
    * @returns {object} - Updated order
    */
   static async updateOrder(orderId, updateData) {
-    const supportedColumns = ['items', 'total_amount', 'status', 'delivery_date', 'advance_paid', 'balance_due', 'notes', 'priority', 'assigned_to', 'measurement_id', 'order_type'];
+    // advance_paid/balance_due are derived from the payments ledger (PaymentService)
+    // and must never be set directly from a request body.
+    const supportedColumns = ['items', 'total_amount', 'status', 'delivery_date', 'notes', 'priority', 'assigned_to', 'measurement_id', 'order_type'];
     const supportsSnapshot = await this.hasMeasurementSnapshotColumn();
     if (supportsSnapshot) {
       supportedColumns.push('measurement_snapshot');
@@ -340,6 +342,11 @@ class OrderModel {
       return this.getOrderById(orderId);
     }
 
+    if (updates.some((clause) => clause.startsWith('total_amount ='))) {
+      // SET expressions read the pre-update row, so reuse the new total's parameter
+      const totalParam = updates.find((clause) => clause.startsWith('total_amount =')).split('= ')[1];
+      updates.push(`balance_due = GREATEST(${totalParam} - COALESCE(advance_paid, 0), 0)`);
+    }
     updates.push(`updated_at = NOW()`);
     values.push(orderId);
 
