@@ -9,6 +9,9 @@ exports.deleteAccount = async (req,res) => {
   } catch (error) {
     logger.error('Account deletion failed',error);
     const status = [400,401].includes(error.status) ? error.status : 503;
-    return responder.error(res,status,status===503 ? 'Deletion could not finish. Please retry to resume safely.' : 'Please re-authenticate to continue deletion.');
+    const message = status === 503
+      ? 'Deletion could not finish. Please retry to resume safely.'
+      : error.message === 'Password is incorrect' ? 'Password is incorrect' : 'Please re-authenticate to continue deletion.';
+    return responder.error(res,status,message);
   }
 };

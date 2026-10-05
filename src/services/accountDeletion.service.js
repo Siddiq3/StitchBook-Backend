@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 const { transaction } = require('../models/billingLedger');
@@ -43,7 +44,12 @@ async function hasColumn(client, table, column) {
 async function verifyIdentity(userId, proof) {
   const user = await UserModel.getUserById(userId);
   if (!user) throw new Error('Account is unavailable');
-  if (proof.googleIdToken) {
+  if (proof.password) {
+    // Email/password accounts (owners and staff) confirm with their current password
+    const row = await db.queryRow('SELECT password_hash FROM users WHERE id=$1', [userId]);
+    const matches = row?.password_hash && await bcrypt.compare(String(proof.password).slice(0, 128), row.password_hash);
+    if (!matches) throw new Error('Password is incorrect');
+  } else if (proof.googleIdToken) {
     const identity = await GoogleAuth.verifyIdToken(proof.googleIdToken);
     if (!user.google_id || identity.googleId !== user.google_id || !identity.issuedAt || Date.now()/1000-identity.issuedAt > 300) throw new Error('Please sign in again with the Google account linked to this account');
   } else if (proof.mobileAccessToken) {
