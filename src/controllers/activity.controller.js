@@ -20,7 +20,7 @@ exports.getActivityByOrder = async (req, res) => {
     const { page, limit, offset } = parsePagination(req, 20, 100);
 
     // Verify order ownership
-    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
     if (!order) {
       return responder.error(res, 403, 'Unauthorized: Order does not belong to your shop');
     }
@@ -50,7 +50,7 @@ exports.addActivityNote = async (req, res) => {
     }
 
     // Verify order ownership
-    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
     if (!order) {
       return responder.error(res, 403, 'Unauthorized: Order does not belong to your shop');
     }
@@ -76,3 +76,4 @@ exports.addActivityNote = async (req, res) => {
     responder.error(res, 500, error.message);
   }
 };
+

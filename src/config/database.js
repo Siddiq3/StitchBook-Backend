@@ -4,6 +4,8 @@
  */
 
 const { Pool, types } = require('pg');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const transactionContext = new AsyncLocalStorage();
 
 // Return DATE columns (delivery_date, payment_date, ...) as plain 'YYYY-MM-DD'.
 // The default converts them to a JS Date at server-local midnight, which can
@@ -47,7 +49,7 @@ pool.on('error', (err) => {
 const query = async (text, params) => {
   const start = Date.now();
   try {
-    const result = await pool.query(text, params);
+    const result = await (transactionContext.getStore() || pool).query(text, params);
     const duration = Date.now() - start;
     if (duration >= SLOW_QUERY_MS) {
       logger.warn('Slow database query', { durationMs: duration });
@@ -83,7 +85,22 @@ const queryAll = async (text, params) => {
   return result.rows;
 };
 
+const transaction = async (work) => {
+  if (transactionContext.getStore()) return work();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await transactionContext.run(client, work);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+};
+
 module.exports = {
+  transaction,
   pool,
   query,
   queryRow,

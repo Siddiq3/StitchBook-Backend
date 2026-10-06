@@ -145,16 +145,18 @@ class OrderModel {
   static async getOrderById(orderId) {
     const supportsSnapshot = await this.hasMeasurementSnapshotColumn();
     const query = `
-      SELECT 
-        o.id, o.order_number, o.customer_id, o.shop_id, o.items, o.total_amount, o.status, 
-        o.delivery_date, o.description, o.advance_paid, o.balance_due, o.notes, o.priority, 
+      SELECT
+        o.id, o.order_number, o.customer_id, o.shop_id, o.items,
+        to_jsonb(o)->>'assigned_to' AS assigned_to, c.name AS "customerName", o.total_amount, o.status,
+        o.delivery_date, o.description, o.advance_paid, o.balance_due, o.notes, o.priority,
         o.measurement_id, ${supportsSnapshot ? 'o.measurement_snapshot,' : ''} o.order_type, o.created_at, o.updated_at,
         m.id as measurement_id_val, m.outfit_type, m.outfit_label, m.measurements_data
       FROM orders o
+      LEFT JOIN customers c ON c.id=o.customer_id AND c.shop_id=o.shop_id
       LEFT JOIN measurements m ON o.measurement_id = m.id
       WHERE o.id = $1;
     `;
-    
+
     const result = await db.queryRow(query, [orderId]);
     if (result) {
       // Parse items and snapshot JSON
@@ -166,7 +168,7 @@ class OrderModel {
           ? JSON.parse(result.measurement_snapshot)
           : result.measurement_snapshot;
       }
-      
+
       // Build nested measurement object if measurement exists
       if (result.measurement_id_val) {
         result.measurement = {
@@ -178,7 +180,7 @@ class OrderModel {
       } else {
         result.measurement = null;
       }
-      
+
       // Clean up temporary columns
       delete result.measurement_id_val;
       delete result.outfit_type;
@@ -196,16 +198,18 @@ class OrderModel {
   static async getOrderByNumber(orderNumber) {
     const supportsSnapshot = await this.hasMeasurementSnapshotColumn();
     const query = `
-      SELECT 
-        o.id, o.order_number, o.customer_id, o.shop_id, o.items, o.total_amount, o.status, 
-        o.delivery_date, o.description, o.advance_paid, o.balance_due, o.notes, o.priority, 
+      SELECT
+        o.id, o.order_number, o.customer_id, o.shop_id, o.items,
+        to_jsonb(o)->>'assigned_to' AS assigned_to, c.name AS "customerName", o.total_amount, o.status,
+        o.delivery_date, o.description, o.advance_paid, o.balance_due, o.notes, o.priority,
         o.measurement_id, ${supportsSnapshot ? 'o.measurement_snapshot,' : ''} o.order_type, o.created_at, o.updated_at,
         m.id as measurement_id_val, m.outfit_type, m.outfit_label, m.measurements_data
       FROM orders o
+      LEFT JOIN customers c ON c.id=o.customer_id AND c.shop_id=o.shop_id
       LEFT JOIN measurements m ON o.measurement_id = m.id
       WHERE o.order_number = $1;
     `;
-    
+
     const result = await db.queryRow(query, [orderNumber]);
     if (result) {
       // Parse items and snapshot JSON
@@ -217,7 +221,7 @@ class OrderModel {
           ? JSON.parse(result.measurement_snapshot)
           : result.measurement_snapshot;
       }
-      
+
       // Build nested measurement object if measurement exists
       if (result.measurement_id_val) {
         result.measurement = {
@@ -229,7 +233,7 @@ class OrderModel {
       } else {
         result.measurement = null;
       }
-      
+
       // Clean up temporary columns
       delete result.measurement_id_val;
       delete result.outfit_type;
@@ -254,22 +258,22 @@ class OrderModel {
       FROM orders
       WHERE shop_id = $1
     `;
-    
+
     const params = [shopId];
-    
+
     if (status) {
       query += ` AND status = $2`;
       params.push(status);
     }
-    
+
     query += `
       ORDER BY created_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2};
     `;
-    
+
     params.push(limit, offset);
     const results = await db.queryAll(query, params);
-    
+
     // Parse items and snapshot JSON for each result
     return results.map((r) => ({
       ...r,
@@ -297,7 +301,7 @@ class OrderModel {
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3;
     `;
-    
+
     const results = await db.queryAll(query, [customerId, limit, offset]);
     return results.map((r) => ({
       ...r,
@@ -354,7 +358,7 @@ class OrderModel {
       UPDATE orders
       SET ${updates.join(', ')}
       WHERE id = $${paramCount}
-      RETURNING id, order_number, customer_id, shop_id, items, total_amount, status, delivery_date, description, advance_paid, balance_due, notes, priority, measurement_id, ${supportsSnapshot ? 'measurement_snapshot,' : ''} created_at, updated_at;
+      RETURNING to_jsonb(orders)->>'assigned_to' AS assigned_to, id, order_number, customer_id, shop_id, items, total_amount, status, delivery_date, description, advance_paid, balance_due, notes, priority, measurement_id, ${supportsSnapshot ? 'measurement_snapshot,' : ''} created_at, updated_at;
     `;
 
     const result = await db.queryRow(query, values);
@@ -381,7 +385,7 @@ class OrderModel {
       DELETE FROM orders
       WHERE id = $1;
     `;
-    
+
     const result = await db.query(query, [orderId]);
     return result.rowCount > 0;
   }
@@ -398,7 +402,7 @@ class OrderModel {
       FROM orders
       WHERE shop_id = $1 AND status = $2;
     `;
-    
+
     const result = await db.queryRow(query, [shopId, status]);
     return result ? parseInt(result.count) : 0;
   }

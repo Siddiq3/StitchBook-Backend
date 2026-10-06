@@ -27,7 +27,7 @@ exports.createMeasurement = async (req, res) => {
     }
 
     // Verify customer belongs to user's shop
-    await AuthorizationService.verifyCustomerOwnership(userId, customer_id);
+    await AuthorizationService.verifyCustomerOwnership(userId, customer_id, req.user);
 
     const measurement = await MeasurementService.createMeasurement(
       customer_id,
@@ -61,7 +61,7 @@ exports.getMeasurementsByCustomer = async (req, res) => {
     const { page, limit, offset } = parsePagination(req, 20, 100);
 
     // Verify customer belongs to user's shop
-    await AuthorizationService.verifyCustomerOwnership(userId, customerId);
+    await AuthorizationService.verifyCustomerOwnership(userId, customerId, req.user);
 
     const measurements = await MeasurementService.getMeasurementsByCustomer(
       customerId,
@@ -95,7 +95,7 @@ exports.getMeasurement = async (req, res) => {
     const { id: measurementId } = req.params;
 
     // Verify ownership
-    const measurement = await AuthorizationService.verifyMeasurementOwnership(userId, measurementId);
+    const measurement = await AuthorizationService.verifyMeasurementOwnership(userId, measurementId, req.user);
     responder.success(res, 200, 'Measurement retrieved', measurement);
   } catch (error) {
     logger.error('Get measurement error:', error.message);
@@ -123,7 +123,7 @@ exports.updateMeasurement = async (req, res) => {
     }
 
     // Verify ownership
-    await AuthorizationService.verifyMeasurementOwnership(userId, measurementId);
+    await AuthorizationService.verifyMeasurementOwnership(userId, measurementId, req.user);
 
     const measurement = await MeasurementService.updateMeasurement(
       measurementId,
@@ -152,7 +152,7 @@ exports.deleteMeasurement = async (req, res) => {
     const { id: measurementId } = req.params;
 
     // Verify ownership
-    await AuthorizationService.verifyMeasurementOwnership(userId, measurementId);
+    await AuthorizationService.verifyMeasurementOwnership(userId, measurementId, req.user);
 
     await MeasurementService.deleteMeasurement(measurementId);
     responder.success(res, 200, 'Measurement deleted');
@@ -165,3 +165,4 @@ exports.deleteMeasurement = async (req, res) => {
     }
   }
 };
+

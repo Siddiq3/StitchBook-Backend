@@ -9,6 +9,8 @@ const AuthorizationService = require('../services/authorization.service');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 const { parsePagination } = require('../utils/pagination');
+const Lists = require('../services/pagedLists.service');
+const PlanLimits = require('../services/planLimits.service');
 
 /**
  * POST /customer
@@ -28,7 +30,7 @@ exports.createCustomer = async (req, res) => {
     // Get user's shop (automatically)
     const shop = await AuthorizationService.getUserShop(userId);
 
-    const customer = await CustomerService.createCustomer(shop.id, {
+    const customer = await PlanLimits.create(req.user, shop.id, 'customers', () => CustomerService.createCustomer(shop.id, {
       name,
       phone,
       notes: notes || null,
@@ -36,11 +38,12 @@ exports.createCustomer = async (req, res) => {
       email: email || null,
       date_of_birth: date_of_birth || null,
       photo_url: photo_url || null,
-    });
+    }));
 
     logger.info(`Customer created for shop: ${shop.id} by user: ${userId}`);
     responder.success(res, 201, 'Customer created', customer);
   } catch (error) {
+    if (error.code === 'PLAN_LIMIT_REACHED' || error.code === 'SUBSCRIPTION_REQUIRED') return responder.error(res,402,error.message,{code:error.code,...error.details});
     logger.error('Create customer error:', error.message);
     responder.error(res, 500, error.message);
   }
@@ -60,19 +63,7 @@ exports.getCustomers = async (req, res) => {
     // Get user's shop
     const shop = await AuthorizationService.getUserShop(userId);
 
-    let result;
-    if (search) {
-      // Search customers
-      const customers = await CustomerService.searchCustomers(shop.id, search);
-      result = { customers, pagination: { page: 1, limit: 20, total: customers.length, pages: 1 } };
-    } else {
-      // Get all customers with pagination
-      result = await CustomerService.getCustomersByShop(
-        shop.id,
-        page,
-        limit
-      );
-    }
+    const result = await Lists.customers(req.user, shop.id, {...req.query, page, limit});
 
     responder.success(res, 200, 'Customers retrieved', result);
   } catch (error) {
@@ -92,7 +83,7 @@ exports.getCustomer = async (req, res) => {
     const { id: customerId } = req.params;
 
     // Verify ownership
-    const customer = await AuthorizationService.verifyCustomerOwnership(userId, customerId);
+    const customer = await AuthorizationService.verifyCustomerOwnership(userId, customerId, req.user);
     responder.success(res, 200, 'Customer retrieved', customer);
   } catch (error) {
     logger.error('Get customer error:', error.message);
@@ -116,7 +107,7 @@ exports.updateCustomer = async (req, res) => {
     const updateData = req.body;
 
     // Verify ownership
-    await AuthorizationService.verifyCustomerOwnership(userId, customerId);
+    await AuthorizationService.verifyCustomerOwnership(userId, customerId, req.user);
 
     const customer = await CustomerService.updateCustomer(customerId, updateData);
     responder.success(res, 200, 'Customer updated', customer);
@@ -141,7 +132,7 @@ exports.deleteCustomer = async (req, res) => {
     const { id: customerId } = req.params;
 
     // Verify ownership
-    await AuthorizationService.verifyCustomerOwnership(userId, customerId);
+    await AuthorizationService.verifyCustomerOwnership(userId, customerId, req.user);
 
     await CustomerService.deleteCustomer(customerId);
     responder.success(res, 200, 'Customer deleted');
@@ -154,3 +145,4 @@ exports.deleteCustomer = async (req, res) => {
     }
   }
 };
+

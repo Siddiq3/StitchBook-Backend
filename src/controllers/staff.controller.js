@@ -1,3 +1,4 @@
+const PlanLimits = require('../services/planLimits.service');
 /**
  * Staff Controller
  * Handles staff-related business logic
@@ -195,6 +196,7 @@ class StaffController {
       }
 
       const shop = await AuthorizationService.getUserShop(req.user.id);
+      if (req.body?.is_active !== undefined && typeof req.body.is_active !== 'boolean') return res.status(400).json({success:false,message:'is_active must be a boolean',error:{code:'VALIDATION_ERROR'}});
       const subscription = req.subscription || {};
       const features = subscription.features || SubscriptionModel.getPlanFeatures(subscription.planType);
       const maxStaff = Number(features.maxStaff ?? 0);
@@ -260,7 +262,7 @@ class StaffController {
 
       let staff;
       try {
-        staff = await StaffModel.createStaff({
+        staff = await PlanLimits.changeStaff(req.user, shop.id, null, is_active, () => StaffModel.createStaff({
         shop_id: shop.id,
         user_id: loginUser?.id || null,
         name,
@@ -279,7 +281,7 @@ class StaffController {
         can_login: loginUser ? true : can_login,
         access_role,
         permissions
-        });
+        }));
       } catch (staffError) {
         // Don't leave an orphan login account behind if the staff row failed
         if (loginUser) await db.query('DELETE FROM users WHERE id = $1', [loginUser.id]).catch(() => {});
@@ -294,6 +296,7 @@ class StaffController {
       });
     } catch (error) {
       logger.error('Create staff error:', error);
+      if (error.status === 402) return res.status(402).json({success:false,message:error.message,error:{code:error.code}});
       
       // Handle unique constraint violations
       if (error.code === '23505') {
@@ -398,6 +401,7 @@ class StaffController {
     try {
       const { id } = req.params;
       const shop = await AuthorizationService.getUserShop(req.user.id);
+      if (req.body?.is_active !== undefined && typeof req.body.is_active !== 'boolean') return res.status(400).json({success:false,message:'is_active must be a boolean',error:{code:'VALIDATION_ERROR'}});
       const { 
         name, phone, email, role, salary, commission_rate, 
         payment_type, pay_rate, aadhar_number, address, photo_url, is_active, joined_date,
@@ -445,7 +449,7 @@ class StaffController {
         });
       }
 
-      const staff = await StaffModel.updateStaff(id, {
+      const staff = await PlanLimits.changeStaff(req.user, shop.id, id, is_active, () => StaffModel.updateStaff(id, {
         name,
         phone,
         email,
@@ -462,7 +466,7 @@ class StaffController {
         can_login,
         access_role,
         permissions
-      });
+      }));
 
       return res.status(200).json({
         success: true,
@@ -472,6 +476,7 @@ class StaffController {
       });
     } catch (error) {
       logger.error('Update staff error:', error);
+      if (error.status === 402) return res.status(402).json({success:false,message:error.message,error:{code:error.code}});
       
       if (error.code === '23505') {
         return res.status(409).json({
@@ -658,7 +663,7 @@ class StaffController {
 
       let linkedOrderNumber = order_number;
       if (order_id) {
-        const order = await AuthorizationService.verifyOrderOwnership(req.user.id, order_id);
+        const order = await AuthorizationService.verifyOrderOwnership(req.user.id, order_id, req.user);
         linkedOrderNumber = linkedOrderNumber || order.order_number;
       }
 
@@ -862,3 +867,4 @@ class StaffController {
 }
 
 module.exports = StaffController;
+

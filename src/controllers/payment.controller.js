@@ -25,7 +25,7 @@ exports.createCashfreeOrderPayment = async (req, res) => {
     }
 
     const shop = await AuthorizationService.getUserShop(userId);
-    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
 
     const checkout = await PaymentService.createCashfreeCheckoutSession({
       order,
@@ -101,7 +101,7 @@ exports.createPayment = async (req, res) => {
     const shop = await AuthorizationService.getUserShop(userId);
 
     // Verify order ownership
-    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
     if (!order) {
       return responder.error(res, 403, 'Unauthorized: Order does not belong to your shop');
     }
@@ -136,7 +136,7 @@ exports.getPaymentsByOrder = async (req, res) => {
     const { page, limit, offset } = parsePagination(req, 20, 100);
 
     // Verify order ownership
-    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
     if (!order) {
       return responder.error(res, 403, 'Unauthorized: Order does not belong to your shop');
     }
@@ -167,7 +167,7 @@ exports.deletePayment = async (req, res) => {
     }
 
     // Verify order ownership
-    const order = await AuthorizationService.verifyOrderOwnership(userId, payment.order_id);
+    const order = await AuthorizationService.verifyOrderOwnership(userId, payment.order_id, req.user);
     if (!order) {
       return responder.error(res, 403, 'Unauthorized: Order does not belong to your shop');
     }
@@ -182,3 +182,4 @@ exports.deletePayment = async (req, res) => {
     responder.error(res, 500, error.message);
   }
 };
+
