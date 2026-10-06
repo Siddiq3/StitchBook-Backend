@@ -10,6 +10,9 @@ const ActivityLogModel = require('../models/activity.model');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 const { parsePagination } = require('../utils/pagination');
+const { transaction } = require('../models/billingLedger');
+const DashboardCacheService = require('../services/dashboardCache.service');
+const Notify = require('../services/notify.service');
 
 // Valid order status flow: pending → cutting → stitching → ready → delivered
 const VALID_STATUSES = ['pending', 'cutting', 'stitching', 'ready', 'delivered'];
@@ -89,6 +92,12 @@ const createStaffAssignmentLogs = async ({ orderId, shopId, userId, previousItem
         old_value: previousName || previousId || null,
         new_value: nextName || nextId,
         notes,
+      });
+      await Notify.staff(shopId, nextId, {
+        title: 'New work assigned',
+        message: `${role.key === 'cutter' ? 'Cutting' : 'Stitching'}: ${itemName}`,
+        type: 'work_assigned',
+        data: { orderId: Number(orderId) },
       });
     }
   }
@@ -182,6 +191,12 @@ exports.createOrder = async (req, res) => {
       measurement_snapshot: measurement_snapshot || null,
       order_type: order_type || 'stitching',
     });
+
+    // Staff assigned at creation get the same activity entry and notification as later assignments
+    if (includesStaffAssignment(items)) {
+      await createStaffAssignmentLogs({ orderId: order.id, shopId: shop.id, userId, previousItems: [], nextItems: items })
+        .catch((logError) => logger.warn('Assignment log failed:', logError.message));
+    }
 
     logger.info(`Order created for customer: ${customer_id} in shop: ${shop.id} with ${items.length} items`);
     responder.success(res, 201, 'Order created', order);
@@ -390,5 +405,84 @@ exports.deleteOrder = async (req, res) => {
     } else {
       responder.error(res, 500, 'Failed to delete order', error.message);
     }
+  }
+};
+
+
+/**
+ * PUT /order/:id/items/:index/done   body: { task: 'cutter' | 'stitcher' }
+ * The staff member assigned to that task (or the owner) marks it finished.
+ * Locks the order row so concurrent updates to other items are not lost.
+ */
+exports.markItemDone = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const index = Number.parseInt(req.params.index, 10);
+    const task = req.body?.task === 'cutter' ? 'cutter' : req.body?.task === 'stitcher' ? 'stitcher' : null;
+    if (!task || !Number.isInteger(index) || index < 0) {
+      return responder.error(res, 400, 'A valid item and task (cutter or stitcher) are required');
+    }
+    const shopId = req.user.shopId;
+    const isOwner = req.user.actorType === 'owner';
+
+    const result = await transaction(async (client) => {
+      const order = (await client.query(
+        'SELECT id, shop_id, items FROM orders WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [id, shopId]
+      )).rows[0];
+      if (!order) return { status: 404, message: 'Order not found' };
+
+      const items = Array.isArray(order.items) ? order.items : [];
+      const item = items[index];
+      if (!item) return { status: 404, message: 'Item not found' };
+
+      const assignedId = getAssignedId(item, task);
+      if (!isOwner && String(assignedId || '') !== String(req.user.staffId || '')) {
+        return { status: 403, message: 'This item is not assigned to you' };
+      }
+
+      const doneKey = task === 'cutter' ? 'cutting_done_at' : 'stitching_done_at';
+      if (item[doneKey]) return { status: 200, order, item, already: true };
+
+      items[index] = {
+        ...item,
+        [doneKey]: new Date().toISOString(),
+        production_status: task === 'cutter' ? 'cut_done' : 'stitched',
+      };
+      const updated = (await client.query(
+        'UPDATE orders SET items = $1::jsonb, updated_at = NOW() WHERE id = $2 RETURNING id, items',
+        [JSON.stringify(items), id]
+      )).rows[0];
+      return { status: 200, order: updated, item: items[index] };
+    });
+
+    if (result.status !== 200) return responder.error(res, result.status, result.message);
+
+    if (!result.already) {
+      const who = getAssignedName(result.item, task) || (isOwner ? 'Owner' : 'Staff');
+      await ActivityLogModel.createActivityLog({
+        order_id: Number(id),
+        shop_id: shopId,
+        user_id: req.user.id,
+        action_type: 'work_done',
+        old_value: null,
+        new_value: task,
+        notes: `${who} finished ${task === 'cutter' ? 'cutting' : 'stitching'} for ${getItemName(result.item, index)}`,
+      }).catch((error) => logger.warn('Work-done activity log failed:', error.message));
+      await DashboardCacheService.invalidateDashboardCache(shopId).catch(() => {});
+      if (!isOwner) {
+        await Notify.owner(shopId, {
+          title: 'Work finished',
+          message: `${who} finished ${task === 'cutter' ? 'cutting' : 'stitching'} for ${getItemName(result.item, index)}`,
+          type: 'work_done',
+          data: { orderId: Number(id) },
+        });
+      }
+    }
+
+    return responder.success(res, 200, 'Work marked as done', { orderId: Number(id), index, item: result.item });
+  } catch (error) {
+    logger.error('Mark item done error:', error.message);
+    return responder.error(res, 500, 'Failed to update work status');
   }
 };

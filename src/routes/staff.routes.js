@@ -131,6 +131,9 @@ router.get('/', requirePermission('staff:read'), StaffController.getStaffByShop)
  */
 router.get('/role/:role', requirePermission('staff:read'), StaffController.getStaffByRole);
 
+// Staff member's own assigned items and monthly pay (registered before '/:id')
+router.get('/me/work', requirePermission('work:read'), StaffController.getMyWork);
+
 /**
  * @swagger
  * /api/staff/{id}/work:

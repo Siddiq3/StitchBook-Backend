@@ -41,6 +41,9 @@ router.put('/:id', requirePermission('orders:write'), orderController.updateOrde
 // PUT /order/:id/status - Update order status (with ownership check)
 router.put('/:id/status', requirePermission('orders:update_status'), orderController.updateOrderStatus);
 
+// Assigned cutter/stitcher (or owner) marks their part of an item as finished
+router.put('/:id/items/:index/done', requirePermission('work:write'), orderController.markItemDone);
+
 // DELETE /order/:id - Delete order (with ownership check)
 router.delete('/:id', requirePermission('orders:write'), orderController.deleteOrder);
 

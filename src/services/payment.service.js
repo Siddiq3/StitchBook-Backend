@@ -55,9 +55,19 @@ class PaymentService {
     const captured = await cashfree.verifiedPayment(session.cashfreeOrderId,session.amount);
     if (paymentId && String(captured.cf_payment_id) !== String(paymentId)) throw new Error('Payment reference mismatch');
     const cashfreePaymentId = String(captured.cf_payment_id);
+    // Webhook and the return page can both record the same payment; notify once
+    const alreadyRecorded = await db.queryRow('SELECT 1 FROM payments WHERE provider_payment_id = $1', [`cashfree:${cashfreePaymentId}`]);
     const payment = await this.createPayment(session.orderId,session.shopId,session.amount,'cashfree',
       new Date().toISOString().slice(0,10),session.userId,
       `Cashfree payment ID: ${cashfreePaymentId} | Cashfree order ID: ${session.cashfreeOrderId}`,`cashfree:${cashfreePaymentId}`);
+    if (!alreadyRecorded) {
+      await require('./notify.service').owner(session.shopId, {
+        title: 'Payment received',
+        message: `₹${Number(session.amount).toLocaleString('en-IN')} received online for order #${session.orderId}`,
+        type: 'payment_received',
+        data: { orderId: Number(session.orderId) },
+      });
+    }
     return {payment,orderId:session.orderId,amount:session.amount,cashfreePaymentId};
   }
 

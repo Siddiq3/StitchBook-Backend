@@ -819,6 +819,66 @@ class StaffController {
    * Get staff work summary
    * GET /api/staff/:id/summary
    */
+  /**
+   * Logged-in staff member's own work: open items assigned to them and this
+   * month's pay summary. Lets stitchers/cutters see their work and earnings
+   * without the payroll permission that would expose other staff.
+   * GET /api/staff/me/work
+   */
+  static async getMyWork(req, res) {
+    try {
+      const staffId = req.user.staffId;
+      const shopId = req.user.shopId;
+      if (!staffId || !shopId) {
+        return res.status(404).json({
+          success: false,
+          message: 'No staff profile for this account',
+          error: { code: 'NOT_STAFF', details: {} }
+        });
+      }
+
+      const assigned = await db.queryAll(`
+        SELECT o.id AS order_id, o.order_number, o.status, o.delivery_date,
+               c.name AS customer_name,
+               COALESCE(item->>'typeLabel', item->>'type') AS item_type,
+               COALESCE((item->>'quantity')::int, 1) AS quantity,
+               CASE WHEN item->>'cutter_staff_id' = $2::text AND item->>'cutting_done_at' IS NULL
+                    THEN 'cutter' ELSE 'stitcher' END AS task,
+               (pos - 1)::int AS item_index
+        FROM orders o
+        JOIN customers c ON c.id = o.customer_id
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.items, '[]'::jsonb)) WITH ORDINALITY AS t(item, pos)
+        WHERE o.shop_id = $1
+          AND o.status <> 'delivered'
+          -- only tasks still open for this staff member
+          AND ((item->>'stitcher_staff_id' = $2::text AND item->>'stitching_done_at' IS NULL)
+            OR (item->>'cutter_staff_id' = $2::text AND item->>'cutting_done_at' IS NULL))
+        ORDER BY o.delivery_date NULLS LAST, o.id
+        LIMIT 100;
+      `, [shopId, staffId]);
+
+      // Pay summary for the current calendar month (India time)
+      const month = await db.queryRow(
+        "SELECT to_char(date_trunc('month', (NOW() AT TIME ZONE 'Asia/Kolkata')), 'YYYY-MM-DD') AS start_date"
+      );
+      const summary = await StaffModel.getWorkSummary(staffId, { start_date: month.start_date });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Your work retrieved successfully',
+        data: { assigned, summary },
+        error: {}
+      });
+    } catch (error) {
+      logger.error('Get my work error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve your work',
+        error: { code: 'SERVER_ERROR', details: {} }
+      });
+    }
+  }
+
   static async getWorkSummary(req, res) {
     try {
       const { id } = req.params;
