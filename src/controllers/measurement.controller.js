@@ -10,6 +10,24 @@ const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 const { parsePagination } = require('../utils/pagination');
 
+// Accept only real body measurements: up to 80 named fields with numbers in
+// (0, 1000]. Labels, record fields, text and absurd values are dropped, so a
+// buggy or malicious client cannot store junk.
+const MEASUREMENT_RESERVED_KEYS = new Set(['id', 'customer_id', 'customerId', 'shop_id', 'created_at', 'updated_at',
+  'createdAt', 'updatedAt', 'outfitType', 'outfit_type', 'outfitLabel', 'outfit_label', 'measurements_data', 'measurementsData']);
+const sanitizeMeasurements = (data) => {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  const clean = {};
+  for (const [rawKey, rawValue] of Object.entries(data)) {
+    const key = String(rawKey).trim().slice(0, 60);
+    const value = typeof rawValue === 'number' ? rawValue : Number.parseFloat(rawValue);
+    if (!key || MEASUREMENT_RESERVED_KEYS.has(key) || !Number.isFinite(value) || value <= 0 || value > 1000) continue;
+    clean[key] = Math.round(value * 100) / 100;
+    if (Object.keys(clean).length >= 80) break;
+  }
+  return clean;
+};
+
 /**
  * POST /measurement
  * Create a new measurement record for a customer
@@ -19,11 +37,12 @@ const { parsePagination } = require('../utils/pagination');
 exports.createMeasurement = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { customer_id, measurements_data, outfit_type, outfit_label } = req.body;
+    const { customer_id, outfit_type, outfit_label } = req.body;
+    const measurements_data = sanitizeMeasurements(req.body.measurements_data);
 
     // Validate request
-    if (!customer_id || !measurements_data) {
-      return responder.error(res, 400, 'Customer ID and measurements data are required');
+    if (!customer_id || Object.keys(measurements_data).length === 0) {
+      return responder.error(res, 400, 'Customer ID and at least one measurement are required');
     }
 
     // Verify customer belongs to user's shop
@@ -116,10 +135,10 @@ exports.updateMeasurement = async (req, res) => {
   try {
     const userId = req.user.id;
     const { id: measurementId } = req.params;
-    const { measurements_data } = req.body;
+    const measurements_data = sanitizeMeasurements(req.body.measurements_data);
 
-    if (!measurements_data) {
-      return responder.error(res, 400, 'Measurements data is required');
+    if (Object.keys(measurements_data).length === 0) {
+      return responder.error(res, 400, 'At least one measurement is required');
     }
 
     // Verify ownership

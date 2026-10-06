@@ -149,9 +149,11 @@ class OrderModel {
         o.id, o.order_number, o.customer_id, o.shop_id, o.items, o.total_amount, o.status, 
         o.delivery_date, o.description, o.advance_paid, o.balance_due, o.notes, o.priority, 
         o.measurement_id, ${supportsSnapshot ? 'o.measurement_snapshot,' : ''} o.order_type, o.created_at, o.updated_at,
-        m.id as measurement_id_val, m.outfit_type, m.outfit_label, m.measurements_data
+        m.id as measurement_id_val, m.outfit_type, m.outfit_label, m.measurements_data,
+        c.name AS customer_name, c.phone AS customer_phone
       FROM orders o
       LEFT JOIN measurements m ON o.measurement_id = m.id
+      LEFT JOIN customers c ON c.id = o.customer_id
       WHERE o.id = $1;
     `;
     
@@ -250,20 +252,23 @@ class OrderModel {
   static async getOrdersByShop(shopId, status = null, limit = 100, offset = 0) {
     const supportsSnapshot = await this.hasMeasurementSnapshotColumn();
     let query = `
-      SELECT id, order_number, customer_id, shop_id, items, total_amount, status, delivery_date, description, advance_paid, balance_due, notes, priority, measurement_id, ${supportsSnapshot ? 'measurement_snapshot,' : ''} order_type, created_at, updated_at
-      FROM orders
-      WHERE shop_id = $1
+      -- Customer name/phone included so lists don't need the whole customer list
+      SELECT o.id, o.order_number, o.customer_id, o.shop_id, o.items, o.total_amount, o.status, o.delivery_date, o.description, o.advance_paid, o.balance_due, o.notes, o.priority, o.measurement_id, ${supportsSnapshot ? 'o.measurement_snapshot,' : ''} o.order_type, o.created_at, o.updated_at,
+             c.name AS customer_name, c.phone AS customer_phone
+      FROM orders o
+      LEFT JOIN customers c ON c.id = o.customer_id
+      WHERE o.shop_id = $1
     `;
     
     const params = [shopId];
     
     if (status) {
-      query += ` AND status = $2`;
+      query += ` AND o.status = $2`;
       params.push(status);
     }
     
     query += `
-      ORDER BY created_at DESC
+      ORDER BY o.created_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2};
     `;
     
@@ -291,10 +296,12 @@ class OrderModel {
   static async getOrdersByCustomer(customerId, limit = 100, offset = 0) {
     const supportsSnapshot = await this.hasMeasurementSnapshotColumn();
     const query = `
-      SELECT id, order_number, customer_id, shop_id, items, total_amount, status, delivery_date, description, advance_paid, balance_due, notes, priority, measurement_id, ${supportsSnapshot ? 'measurement_snapshot,' : ''} order_type, created_at, updated_at
-      FROM orders
-      WHERE customer_id = $1
-      ORDER BY created_at DESC
+      SELECT o.id, o.order_number, o.customer_id, o.shop_id, o.items, o.total_amount, o.status, o.delivery_date, o.description, o.advance_paid, o.balance_due, o.notes, o.priority, o.measurement_id, ${supportsSnapshot ? 'o.measurement_snapshot,' : ''} o.order_type, o.created_at, o.updated_at,
+             c.name AS customer_name, c.phone AS customer_phone
+      FROM orders o
+      LEFT JOIN customers c ON c.id = o.customer_id
+      WHERE o.customer_id = $1
+      ORDER BY o.created_at DESC
       LIMIT $2 OFFSET $3;
     `;
     
