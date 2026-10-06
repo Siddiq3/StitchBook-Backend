@@ -14,8 +14,10 @@ const crypto = require('crypto');
 // shop's owner and staff share Wi-Fi, so pure per-IP keys lock out innocent users.
 const hash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 24);
 // Collapse IPv6 to its /64 so one device cannot rotate addresses within its block
+// Render sits behind Cloudflare, so req.ip is sometimes a Cloudflare edge address that
+// many users share. Cloudflare overwrites CF-Connecting-IP with the real client address.
 const ipKey = (req) => {
-  const ip = String(req.ip || '');
+  const ip = String(req.get('cf-connecting-ip') || req.ip || '');
   return ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip;
 };
 // Per IP + the account being targeted (login, OTP)

@@ -10,7 +10,7 @@ const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 
 const getAuthMeta = (req) => ({
-  ip: req.ip,
+  ip: req.get('cf-connecting-ip') || req.ip,
   userAgent: req.get('User-Agent'),
   device: typeof req.body.device === 'object'
     ? JSON.stringify(req.body.device)
