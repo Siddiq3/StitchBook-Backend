@@ -14,8 +14,10 @@ const router = express.Router();
 // All dashboard routes require authentication
 router.use(authMiddleware);
 router.use(subscriptionGate);
+router.use(requirePermission('payments:read'));
 
 // GET /dashboard/stats - Get dashboard statistics
 router.get('/stats', requirePermission('dashboard:read'), dashboardController.getDashboardStats);
 
 module.exports = router;
+

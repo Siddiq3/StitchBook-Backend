@@ -10,6 +10,9 @@ const ActivityLogModel = require('../models/activity.model');
 const responder = require('../utils/responder');
 const logger = require('../utils/logger');
 const { parsePagination } = require('../utils/pagination');
+const Lists = require('../services/pagedLists.service');
+const PlanLimits = require('../services/planLimits.service');
+const Access = require('../services/staffAccess.service');
 
 // Valid order status flow: pending → cutting → stitching → ready → delivered
 const VALID_STATUSES = ['pending', 'cutting', 'stitching', 'ready', 'delivered'];
@@ -172,20 +175,21 @@ exports.createOrder = async (req, res) => {
     const shop = await AuthorizationService.getUserShop(userId);
 
     // Verify customer belongs to user's shop
-    await AuthorizationService.verifyCustomerOwnership(userId, customer_id);
+    await AuthorizationService.verifyCustomerOwnership(userId, customer_id, req.user);
 
-    const order = await OrderService.createOrder(customer_id, shop.id, {
+    const order = await PlanLimits.create(req.user, shop.id, 'orders', () => OrderService.createOrder(customer_id, shop.id, {
       items,
       delivery_date: delivery_date || null,
       description: description || '',
       measurement_id: measurement_id || null,
       measurement_snapshot: measurement_snapshot || null,
       order_type: order_type || 'stitching',
-    });
+    }));
 
     logger.info(`Order created for customer: ${customer_id} in shop: ${shop.id} with ${items.length} items`);
-    responder.success(res, 201, 'Order created', order);
+    responder.success(res, 201, 'Order created', Access.serializeOrder(order, req.user));
   } catch (error) {
+    if (error.code === 'PLAN_LIMIT_REACHED' || error.code === 'SUBSCRIPTION_REQUIRED') return responder.error(res,402,error.message,{code:error.code,...error.details});
     logger.error('Create order error:', error.message);
     if (error.message.includes('Unauthorized')) {
       responder.error(res, 403, error.message);
@@ -209,23 +213,7 @@ exports.getOrders = async (req, res) => {
     // Get user's shop
     const shop = await AuthorizationService.getUserShop(userId);
 
-    let result;
-    if (customerId) {
-      // Verify customer belongs to user's shop
-      await AuthorizationService.verifyCustomerOwnership(userId, customerId);
-      result = await OrderService.getOrdersByCustomer(
-        customerId,
-        page,
-        limit
-      );
-    } else {
-      result = await OrderService.getOrdersByShop(
-        shop.id,
-        status,
-        page,
-        limit
-      );
-    }
+    const result = await Lists.orders(req.user, shop.id, {...req.query, page, limit});
 
     responder.success(res, 200, 'Orders retrieved', result);
   } catch (error) {
@@ -249,8 +237,8 @@ exports.getOrder = async (req, res) => {
     const { id: orderId } = req.params;
 
     // Verify ownership
-    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
-    responder.success(res, 200, 'Order retrieved', order);
+    const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
+    responder.success(res, 200, 'Order retrieved', Access.serializeOrder(order, req.user));
   } catch (error) {
     logger.error('Get order error:', error.message);
     if (error.message.includes('Unauthorized')) {
@@ -279,7 +267,7 @@ exports.updateOrder = async (req, res) => {
     if (Array.isArray(updateData.items) && rejectStaffAssignmentWithoutPlan(req, res, updateData.items)) return;
 
     // Verify ownership
-    const existingOrder = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const existingOrder = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
 
     const order = await OrderService.updateOrder(orderId, updateData);
 
@@ -293,7 +281,7 @@ exports.updateOrder = async (req, res) => {
       });
     }
 
-    responder.success(res, 200, 'Order updated', order);
+    responder.success(res, 200, 'Order updated', Access.serializeOrder(order, req.user));
   } catch (error) {
     logger.error('Update order error:', error.message);
     if (error.message.includes('Unauthorized')) {
@@ -328,7 +316,7 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     // Verify ownership
-    const existingOrder = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    const existingOrder = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
 
     // Validate status flow: pending → cutting → stitching → ready → delivered
     const statusFlow = {
@@ -357,7 +345,7 @@ exports.updateOrderStatus = async (req, res) => {
       notes: `Status changed from ${STATUS_LABELS[existingOrder.status] || existingOrder.status} to ${STATUS_LABELS[normalizedStatus] || normalizedStatus}`,
     });
 
-    responder.success(res, 200, 'Order status updated', order);
+    responder.success(res, 200, 'Order status updated', Access.serializeOrder(order, req.user));
   } catch (error) {
     logger.error('Update order status error:', error.message);
     if (error.message.includes('Unauthorized')) {
@@ -379,7 +367,7 @@ exports.deleteOrder = async (req, res) => {
     const { id: orderId } = req.params;
 
     // Verify ownership
-    await AuthorizationService.verifyOrderOwnership(userId, orderId);
+    await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
 
     await OrderService.deleteOrder(orderId);
     responder.success(res, 200, 'Order deleted');
@@ -392,3 +380,4 @@ exports.deleteOrder = async (req, res) => {
     }
   }
 };
+

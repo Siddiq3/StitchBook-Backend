@@ -13,6 +13,7 @@ const { requirePermission } = require('../middleware/permissions');
 // All routes require authentication
 router.use(authMiddleware);
 router.use(subscriptionGate);
+router.use(requirePermission('payments:read'));
 
 /**
  * @swagger
@@ -217,3 +218,4 @@ router.put('/read-all', NotificationController.markAllAsRead);
 router.delete('/:id', requirePermission('shop:write'), NotificationController.deleteNotification);
 
 module.exports = router;
+

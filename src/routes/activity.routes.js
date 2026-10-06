@@ -14,6 +14,7 @@ const router = express.Router();
 // All activity routes require authentication
 router.use(authMiddleware);
 router.use(subscriptionGate);
+router.use(requirePermission('payments:read'));
 
 // GET /activity/order/:orderId - Get activity logs for an order
 router.get('/order/:orderId', requirePermission('orders:read'), activityController.getActivityByOrder);
@@ -22,3 +23,4 @@ router.get('/order/:orderId', requirePermission('orders:read'), activityControll
 router.post('/order/:orderId', requirePermission('orders:read'), activityController.addActivityNote);
 
 module.exports = router;
+

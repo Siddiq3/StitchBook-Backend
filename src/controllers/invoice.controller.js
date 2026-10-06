@@ -142,8 +142,8 @@ class InvoiceController {
       // Linked records must belong to this shop too, not just shop_id
       const userId = req.user.id;
       try {
-        if (order_id) await AuthorizationService.verifyOrderOwnership(userId, order_id);
-        if (customer_id) await AuthorizationService.verifyCustomerOwnership(userId, customer_id);
+        if (order_id) await AuthorizationService.verifyOrderOwnership(userId, order_id, req.user);
+        if (customer_id) await AuthorizationService.verifyCustomerOwnership(userId, customer_id, req.user);
       } catch {
         return res.status(403).json({
           success: false,
@@ -279,10 +279,10 @@ class InvoiceController {
     try {
       const userId = req.user.id;
       const { orderId } = req.params;
-      const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+      const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
       const shop = await AuthorizationService.getUserShop(userId);
       const customer = order.customer_id
-        ? await AuthorizationService.verifyCustomerOwnership(userId, order.customer_id)
+        ? await AuthorizationService.verifyCustomerOwnership(userId, order.customer_id, req.user)
         : null;
       const invoice = await InvoiceModel.getInvoiceByOrderId(orderId);
 
@@ -311,10 +311,10 @@ class InvoiceController {
     try {
       const userId = req.user.id;
       const { orderId } = req.params;
-      const order = await AuthorizationService.verifyOrderOwnership(userId, orderId);
+      const order = await AuthorizationService.verifyOrderOwnership(userId, orderId, req.user);
       const shop = await AuthorizationService.getUserShop(userId);
       const customer = order.customer_id
-        ? await AuthorizationService.verifyCustomerOwnership(userId, order.customer_id)
+        ? await AuthorizationService.verifyCustomerOwnership(userId, order.customer_id, req.user)
         : null;
       const invoice = await InvoiceModel.getInvoiceByOrderId(orderId);
 
@@ -593,3 +593,4 @@ class InvoiceController {
 }
 
 module.exports = InvoiceController;
+

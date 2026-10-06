@@ -9,6 +9,7 @@ const OrderModel = require('../models/order.model');
 const MeasurementModel = require('../models/measurement.model');
 const db = require('../config/database');
 const logger = require('../utils/logger');
+const Access = require('./staffAccess.service');
 
 class AuthorizationService {
   /**
@@ -18,7 +19,7 @@ class AuthorizationService {
    * @returns {object} - Customer data if authorized
    * @throws Error if not authorized
    */
-  static async verifyCustomerOwnership(userId, customerId) {
+  static async verifyCustomerOwnership(userId, customerId, actor) {
     try {
       // Owned shop or active staff shop, in one query (see getUserShop)
       const effectiveShop = await this.getUserShop(userId).catch(() => null);
@@ -40,6 +41,11 @@ class AuthorizationService {
         throw new Error('Unauthorized: Customer does not belong to your shop');
       }
 
+      if (Access.isScoped(actor)) {
+        if (!actor.staffId) throw new Error('Unauthorized: Missing staff assignment identity');
+        const assigned = await db.queryRow(`SELECT o.id FROM orders o WHERE o.shop_id=$1 AND o.customer_id=$2 AND ${Access.assignmentSql('o','$3')} LIMIT 1`,[effectiveShop.id,customerId,actor.staffId || '']);
+        if (!assigned) throw new Error('Unauthorized: Customer has no work assigned to you');
+      }
       return customer;
     } catch (error) {
       logger.error('Authorization check failed:', error.message);
@@ -54,7 +60,7 @@ class AuthorizationService {
    * @returns {object} - Order data if authorized
    * @throws Error if not authorized
    */
-  static async verifyOrderOwnership(userId, orderId) {
+  static async verifyOrderOwnership(userId, orderId, actor) {
     try {
       // Owned shop or active staff shop, in one query (see getUserShop)
       const effectiveShop = await this.getUserShop(userId).catch(() => null);
@@ -76,6 +82,7 @@ class AuthorizationService {
         throw new Error('Unauthorized: Order does not belong to your shop');
       }
 
+      if (actor && !Access.orderAssigned(order, actor)) throw new Error('Unauthorized: Order is not assigned to you');
       return order;
     } catch (error) {
       logger.error('Authorization check failed:', error.message);
@@ -90,7 +97,7 @@ class AuthorizationService {
    * @returns {object} - Measurement data if authorized
    * @throws Error if not authorized
    */
-  static async verifyMeasurementOwnership(userId, measurementId) {
+  static async verifyMeasurementOwnership(userId, measurementId, actor) {
     try {
       // Owned shop or active staff shop, in one query (see getUserShop)
       const effectiveShop = await this.getUserShop(userId).catch(() => null);
@@ -114,6 +121,7 @@ class AuthorizationService {
         throw new Error('Unauthorized: Measurement does not belong to your shop');
       }
 
+      await this.verifyCustomerOwnership(userId, measurement.customer_id, actor);
       return measurement;
     } catch (error) {
       logger.error('Authorization check failed:', error.message);
@@ -188,3 +196,4 @@ class AuthorizationService {
 }
 
 module.exports = AuthorizationService;
+
