@@ -841,15 +841,7 @@ class AuthService {
       }
 
       return {
-        id: user.id,
-        phone: user.phone,
-        email: user.email,
-        name: user.name,
-        avatar: user.avatar,
-        shopId: user.shop_id,
-        authProvider: user.auth_provider,
-        lastLogin: user.last_login,
-        createdAt: user.created_at,
+        ...(await formatUser(user)),
         updatedAt: user.updated_at,
       };
     } catch (error) {
