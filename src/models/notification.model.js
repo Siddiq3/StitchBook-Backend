@@ -64,16 +64,18 @@ class NotificationModel {
    * @param {number} offset - Offset for pagination
    * @returns {array} - Array of notifications
    */
-  static async getNotificationsByUser(userId, limit = 50, offset = 0) {
+  static async getNotificationsByUser(userId, shopId, limit = 50, offset = 0) {
+    // Scoped to the user's own shop: shop-wide (user_id NULL) rows from other
+    // shops must never appear.
     const query = `
       SELECT id, shop_id, user_id, title, message, type, is_read, read_at, data, created_at
       FROM notifications
-      WHERE user_id = $1 OR user_id IS NULL
+      WHERE shop_id = $2 AND (user_id = $1 OR user_id IS NULL)
       ORDER BY created_at DESC
-      LIMIT $2 OFFSET $3;
+      LIMIT $3 OFFSET $4;
     `;
-    
-    return db.queryAll(query, [userId, limit, offset]);
+
+    return db.queryAll(query, [userId, shopId, limit, offset]);
   }
 
   /**

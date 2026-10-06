@@ -6,7 +6,7 @@
 const express = require('express');
 const authController = require('../controllers/auth.controller');
 const authMiddleware = require('../middleware/auth');
-const { loginLimiter, otpLimiter, refreshLimiter } = require('../middleware/rateLimit/limitersRedis');
+const { loginLimiter, otpLimiter, refreshLimiter, registerLimiter } = require('../middleware/rateLimit/limitersRedis');
 
 const router = express.Router();
 router.use(require('../middleware/webSession').webSession);
@@ -14,7 +14,7 @@ router.use(require('../middleware/webSession').webSession);
 // ============================================================================
 // PUBLIC ROUTES (No authentication required)
 // ============================================================================
-router.post('/register', loginLimiter, authController.register);
+router.post('/register', registerLimiter, authController.register);
 router.post('/login', loginLimiter, authController.passwordLogin);
 router.post('/forgot-password', otpLimiter, authController.requestPasswordReset);
 router.post('/reset-password', loginLimiter, authController.resetPassword);

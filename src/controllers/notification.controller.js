@@ -189,8 +189,12 @@ class NotificationController {
       const userId = req.user.id;
       const { limit, offset } = parsePagination(req, 50, 100);
 
-      const notifications = await NotificationModel.getNotificationsByUser(userId, limit, offset);
-      const unreadCount = await NotificationModel.getUnreadCount(null, userId);
+      const shopId = getAuthenticatedShopId(req);
+      if (!shopId) {
+        return res.status(200).json({ success: true, message: 'Notifications retrieved successfully', data: { notifications: [], unread_count: 0, pagination: { limit, offset } }, error: {} });
+      }
+      const notifications = await NotificationModel.getNotificationsByUser(userId, shopId, limit, offset);
+      const unreadCount = await NotificationModel.getUnreadCount(shopId, userId);
 
       return res.status(200).json({
         success: true,
@@ -274,7 +278,8 @@ class NotificationController {
   static async markAllAsRead(req, res) {
     try {
       const authenticatedShopId = getAuthenticatedShopId(req);
-      const { shop_id } = req.body;
+      // Defaults to the caller's shop; the app does not send shop_id
+      const shop_id = req.body?.shop_id ?? authenticatedShopId;
       const userId = req.user.id;
 
       if (!authenticatedShopId) {
