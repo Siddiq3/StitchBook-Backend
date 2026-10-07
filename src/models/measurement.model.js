@@ -66,6 +66,23 @@ class MeasurementModel {
   }
 
   /**
+   * Latest measurement of every customer in a shop, in one query
+   * (uses idx_measurements_customer_created)
+   */
+  static async getLatestForShop(shopId) {
+    const query = `
+      SELECT DISTINCT ON (m.customer_id)
+        m.id, m.customer_id, m.measurements_data, m.outfit_type, m.outfit_label, m.created_at, m.updated_at
+      FROM measurements m
+      JOIN customers c ON c.id = m.customer_id
+      WHERE c.shop_id = $1
+      ORDER BY m.customer_id, m.created_at DESC;
+    `;
+    const results = await db.queryAll(query, [shopId]);
+    return results.map((row) => ({ ...row, measurements_data: safeParseMeasurements(row.measurements_data) }));
+  }
+
+  /**
    * Get all measurements for a customer
    * @param {number} customerId - Customer ID
    * @returns {array} - Array of measurement records

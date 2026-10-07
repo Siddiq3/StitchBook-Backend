@@ -75,6 +75,18 @@ class MeasurementService {
    * @param {number} customerId - Customer ID
    * @returns {array} - Array of measurements
    */
+  static async getLatestForShop(shopId) {
+    const rows = await MeasurementModel.getLatestForShop(shopId);
+    return rows.map((m) => ({
+      ...m,
+      outfitType: m.outfit_type,
+      outfitLabel: m.outfit_label,
+      measurementsData: m.measurements_data,
+      createdAt: m.created_at,
+      updatedAt: m.updated_at,
+    }));
+  }
+
   static async getMeasurementsByCustomer(customerId, outfitType = null, limit = 20, offset = 0) {
     try {
       const measurements = await MeasurementModel.getMeasurementsByCustomer(customerId, outfitType, limit, offset);

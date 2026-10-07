@@ -68,6 +68,23 @@ exports.createMeasurement = async (req, res) => {
 };
 
 /**
+ * GET /measurement/latest
+ * Latest measurement for every customer in the caller's shop (one request
+ * instead of one per customer). Scoped by the authenticated shop.
+ */
+exports.getLatestForShop = async (req, res) => {
+  try {
+    const shopId = req.user.shop_id;
+    if (!shopId) return responder.error(res, 404, 'Shop not found');
+    const measurements = await MeasurementService.getLatestForShop(shopId);
+    responder.success(res, 200, 'Measurements retrieved', { measurements });
+  } catch (error) {
+    logger.error('Get latest measurements error:', error.message);
+    responder.error(res, 500, 'Failed to get measurements');
+  }
+};
+
+/**
  * GET /measurement/customer/:customerId
  * Get all measurements for a customer
  * Security: Verifies customer belongs to user's shop

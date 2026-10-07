@@ -25,6 +25,9 @@ router.use(subscriptionGate);
 // POST /measurement - Create a new measurement for a customer
 router.post('/', requirePermission('measurements:write'), measurementController.createMeasurement);
 
+// GET /measurement/latest - Latest measurement per customer for the whole shop (before /:id)
+router.get('/latest', requirePermission('measurements:read'), measurementController.getLatestForShop);
+
 // GET /measurement/customer/:customerId - Get all measurements for a customer
 router.get('/customer/:customerId', requirePermission('measurements:read'), measurementController.getMeasurementsByCustomer);
 
