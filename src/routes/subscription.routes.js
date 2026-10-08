@@ -10,6 +10,7 @@ const { requirePermission } = require('../middleware/permissions');
 const router = express.Router();
 
 // Public routes
+router.get('/plans', subscriptionController.getPlans);
 router.post('/verify', subscriptionController.verifySubscription);
 router.get('/upgrade-session/:sessionId', subscriptionController.getUpgradeSession);
 router.post('/upgrade-session/:sessionId/checkout', subscriptionController.createUpgradeCheckout);

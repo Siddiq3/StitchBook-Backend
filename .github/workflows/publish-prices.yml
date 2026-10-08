@@ -1,0 +1,26 @@
+name: Publish subscription prices
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-subscription-prices
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate prices, update Render environment, and request deployment
+        env:
+          BASIC_PLAN_PRICE: ${{ vars.BASIC_PLAN_PRICE }}
+          TEAM_PLAN_PRICE: ${{ vars.TEAM_PLAN_PRICE }}
+          PRO_PLAN_PRICE: ${{ vars.PRO_PLAN_PRICE }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: node scripts/publish-subscription-prices.js

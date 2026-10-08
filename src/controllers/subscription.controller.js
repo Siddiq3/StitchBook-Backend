@@ -12,6 +12,11 @@ const logger = require('../utils/logger');
  * flow and entitlement lives on the users table, so client-driven subscription
  * writes are refused.
  */
+exports.getPlans = (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  responder.success(res, 200, 'Current subscription prices', SubscriptionService.getPublicPlans());
+};
+
 exports.retiredEndpoint = (req, res) => {
   responder.error(res, 410, 'This subscription endpoint is no longer available. Plans are managed through the StitchBook website.');
 };
@@ -58,6 +63,9 @@ exports.getUpgradeSession = async (req, res) => {
     responder.success(res, 200, 'Upgrade session validated', {
       sessionId: session.sessionId,
       plan: session.plan,
+      amount: session.amount,
+      currency: session.currency,
+      duration: SubscriptionService.getPlanConfig(session.plan).duration,
       expiresAt: session.expiresAt,
       user: user ? {
         id: user.id,
